@@ -1,0 +1,44 @@
+server:
+  port: 9599
+
+spring:
+  application:
+    name: ep-data-builder
+  datasource:
+    url: jdbc:sqlite:data/databuilder.db?journal_mode=WAL&busy_timeout=5000
+    driver-class-name: org.sqlite.JDBC
+    hikari:
+      maximum-pool-size: 1        # SQLite 单写者，串行化连接规避 SQLITE_BUSY
+  jpa:
+    hibernate:
+      ddl-auto: none              # schema 一律 Flyway 管
+    properties:
+      hibernate:
+        dialect: com.ep.databuilder.config.SQLiteDialect
+    open-in-view: false
+  flyway:
+    locations: classpath:db/migration/sqlite   # 切库时改 mysql/dm 目录
+    placeholder-replacement: false             # 脚本注释含 ${} 模板示例，禁用 Flyway 占位符
+  jackson:
+    time-zone: GMT+8
+
+ep:
+  jwt:
+    # 生产环境务必通过环境变量覆盖
+    secret: ep-databuilder-dev-secret-0123456789abcdef
+    expire-hours: 12
+  crypto:
+    # DIRECT 通道数据源密码的 AES 加密密钥，生产环境务必通过环境变量 EP_BUILDER_SECRET 覆盖
+    secret: ${EP_BUILDER_SECRET:ep-databuilder-dev-crypto-secret}
+  contract:
+    # 契约平台开放 API；留空则 API_CALL 步骤必须使用 overrideUrl（脱契约兜底）
+    base-url: ""
+    token: ""
+    cache-ttl-minutes: 10
+  hunter:
+    # 测试猎户数据执行开放接口；留空则 HUNTER 通道数据源不可用（提示切 DIRECT）
+    base-url: ""
+    token: ""
+  build:
+    api-connect-timeout-ms: 5000
+    api-read-timeout-ms: 30000

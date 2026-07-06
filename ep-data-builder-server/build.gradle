@@ -1,0 +1,36 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot' version '2.1.14.RELEASE'
+    id 'io.spring.dependency-management' version '1.0.9.RELEASE'
+}
+
+group = 'com.ep'
+version = '0.1.0'
+sourceCompatibility = 1.8
+targetCompatibility = 1.8
+
+[compileJava, compileTestJava]*.options*.encoding = 'UTF-8'
+
+repositories {
+    // 内网环境可换成公司私服
+    maven { url 'https://maven.aliyun.com/repository/public' }
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.springframework.boot:spring-boot-starter-aop'
+    implementation 'org.springframework.boot:spring-boot-starter-jdbc'   // 目标库 JdbcTemplate（DIRECT 通道）
+    implementation 'org.flywaydb:flyway-core'                            // 5.2.4，Boot 2.1 托管
+    implementation 'org.xerial:sqlite-jdbc:3.36.0.3'
+    implementation 'mysql:mysql-connector-java:8.0.28'                   // DIRECT 兜底通道目标库驱动；达梦/Oracle 按需手动加
+    implementation 'com.jayway.jsonpath:json-path:2.4.0'                 // 输出变量提取与断言
+    implementation 'org.springframework.security:spring-security-crypto' // 仅用 BCrypt
+    implementation 'io.jsonwebtoken:jjwt:0.9.1'
+    implementation 'io.springfox:springfox-swagger2:2.9.2'
+    implementation 'io.springfox:springfox-swagger-ui:2.9.2'
+    compileOnly 'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}

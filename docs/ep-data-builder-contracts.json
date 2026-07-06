@@ -1,0 +1,4268 @@
+{
+  "module": {
+    "code": "ep-data-builder",
+    "name": "EP 造数平台（TestData Service）",
+    "owner": "admin",
+    "description": "EP 造数平台后端：管理数据工厂（参数 + API_CALL/SQL_EXEC 步骤编排）、环境/模块端点/数据源，提供控制台同步造数与面向 LLM 用例生成流水线的开放造数 API（工厂发现 + on-the-fly 造数）。统一响应包装 Result{code,message,data}，code=0 成功。契约由 contract-distill 蒸馏录入。",
+    "repoUrl": "/Users/luwutao/Documents/ep-data-builder"
+  },
+  "apis": [
+    {
+      "codeName": "login",
+      "name": "管理端登录",
+      "method": "POST",
+      "path": "/api/v1/auth/login",
+      "description": "管理端账号密码登录，换取 JWT。前端控制台所有 /api/v1/** 接口调用前必须先登录拿 token。校验启用状态的用户名 + BCrypt 密码比对，成功返回 token 与用户角色（ADMIN/EDITOR/VIEWER）。首次启动时系统自动初始化默认管理员 admin/admin123（DataInitializer）。",
+      "authDesc": "无需鉴权（AuthInterceptor 排除路径 /api/v1/auth/login）",
+      "contentType": "application/json",
+      "requestFields": [
+        {
+          "name": "username",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "用户名",
+          "valueDescription": "@NotBlank 不能为空"
+        },
+        {
+          "name": "password",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "密码明文（服务端 BCrypt 比对）",
+          "valueDescription": "@NotBlank 不能为空"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功，非 0 失败"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息，成功为 ok"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "登录结果",
+              "children": [
+                {
+                  "name": "token",
+                  "dataType": "string",
+                  "description": "JWT，后续请求放入 Authorization: Bearer {token}"
+                },
+                {
+                  "name": "username",
+                  "dataType": "string",
+                  "description": "用户名"
+                },
+                {
+                  "name": "displayName",
+                  "dataType": "string",
+                  "description": "显示名"
+                },
+                {
+                  "name": "role",
+                  "dataType": "enum",
+                  "description": "角色",
+                  "enums": [
+                    {
+                      "value": "ADMIN",
+                      "meaning": "管理员（最高角色，可管理环境/数据源/令牌/用户/日志）"
+                    },
+                    {
+                      "value": "EDITOR",
+                      "meaning": "编辑（可维护工厂、执行控制台造数）"
+                    },
+                    {
+                      "value": "VIEWER",
+                      "meaning": "只读（仅查询类接口）"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "统一返回 200，登录成败看 body.code"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "用户名或密码错误",
+          "httpStatus": "200",
+          "produceCondition": "用户不存在/已停用（findByUsernameAndEnabledTrue 未命中）或 BCrypt 密码不匹配，两种情况刻意同文案（UserService.login）"
+        },
+        {
+          "code": "1001",
+          "message": "{field} 不能为空",
+          "httpStatus": "200",
+          "produceCondition": "username 或 password 为空白（@NotBlank 校验失败，GlobalExceptionHandler 转 1001）"
+        }
+      ],
+      "examples": [
+        {
+          "title": "默认管理员登录（响应报文为构造示例【待确认】）",
+          "requestBody": "{\"username\":\"admin\",\"password\":\"admin123\"}",
+          "responseBody": "{\"code\":0,\"message\":\"ok\",\"data\":{\"token\":\"eyJhbGciOiJIUzI1NiJ9...\",\"username\":\"admin\",\"displayName\":\"管理员\",\"role\":\"ADMIN\"}}"
+        }
+      ]
+    },
+    {
+      "codeName": "getCurrentUser",
+      "name": "查询当前登录用户",
+      "method": "GET",
+      "path": "/api/v1/auth/me",
+      "description": "返回当前 JWT 对应的登录用户信息（从 UserContext 取拦截器解析结果，不查库）。前端刷新页面后恢复登录态、判断角色渲染菜单时调用。",
+      "authDesc": "JWT 鉴权：请求头 Authorization: Bearer {token}（POST /api/v1/auth/login 获取）。登录即可，无角色要求。",
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "当前登录用户（JWT 载荷解析结果）",
+              "children": [
+                {
+                  "name": "id",
+                  "dataType": "long",
+                  "description": "用户 id"
+                },
+                {
+                  "name": "username",
+                  "dataType": "string",
+                  "description": "用户名"
+                },
+                {
+                  "name": "displayName",
+                  "dataType": "string",
+                  "description": "显示名"
+                },
+                {
+                  "name": "role",
+                  "dataType": "enum",
+                  "description": "角色",
+                  "enums": [
+                    {
+                      "value": "ADMIN",
+                      "meaning": "管理员"
+                    },
+                    {
+                      "value": "EDITOR",
+                      "meaning": "编辑"
+                    },
+                    {
+                      "value": "VIEWER",
+                      "meaning": "只读"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过即成功"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "未携带 Authorization: Bearer 头（body: Result{code:401,message:未登录}）或 JWT 解析失败/过期（message:登录已过期，请重新登录）——AuthInterceptor"
+        }
+      ]
+    },
+    {
+      "codeName": "listUsers",
+      "name": "用户列表",
+      "method": "GET",
+      "path": "/api/v1/users",
+      "description": "查询全部用户（不分页，含已停用用户），用户管理页展示。不返回密码哈希。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 ADMIN 角色（类级 @RequireRole(\"ADMIN\")），角色不足返回 HTTP 403。",
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "array",
+              "description": "用户列表（UserVO）",
+              "children": [
+                {
+                  "name": "id",
+                  "dataType": "long",
+                  "description": "用户 id"
+                },
+                {
+                  "name": "username",
+                  "dataType": "string",
+                  "description": "用户名"
+                },
+                {
+                  "name": "displayName",
+                  "dataType": "string",
+                  "description": "显示名"
+                },
+                {
+                  "name": "role",
+                  "dataType": "enum",
+                  "description": "角色",
+                  "enums": [
+                    {
+                      "value": "ADMIN",
+                      "meaning": "管理员"
+                    },
+                    {
+                      "value": "EDITOR",
+                      "meaning": "编辑"
+                    },
+                    {
+                      "value": "VIEWER",
+                      "meaning": "只读"
+                    }
+                  ]
+                },
+                {
+                  "name": "enabled",
+                  "dataType": "boolean",
+                  "description": "是否启用（false 视为停用，登录/开放能力不可用）"
+                },
+                {
+                  "name": "createdAt",
+                  "dataType": "datetime",
+                  "description": "创建时间"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权与角色校验通过"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token（AuthInterceptor）"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色低于 ADMIN（body: Result{code:403,message:权限不足，需要 ADMIN 及以上角色}）"
+        }
+      ]
+    },
+    {
+      "codeName": "createUser",
+      "name": "创建用户",
+      "method": "POST",
+      "path": "/api/v1/users",
+      "description": "创建管理端用户，密码以 BCrypt 哈希入库，新用户默认启用（enabled=true）。成功后该用户即可用对应角色登录。写操作日志（USER/CREATE）。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 ADMIN 角色（类级 @RequireRole(\"ADMIN\")）。",
+      "contentType": "application/json",
+      "requestFields": [
+        {
+          "name": "username",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "用户名",
+          "valueDescription": "@NotBlank",
+          "businessRule": "在启用用户中唯一：同名启用用户已存在则报 1000（findByUsernameAndEnabledTrue 校验）"
+        },
+        {
+          "name": "password",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "初始密码明文",
+          "valueDescription": "@NotBlank"
+        },
+        {
+          "name": "displayName",
+          "location": "BODY",
+          "dataType": "string",
+          "required": false,
+          "description": "显示名"
+        },
+        {
+          "name": "role",
+          "location": "BODY",
+          "dataType": "enum",
+          "required": true,
+          "description": "角色",
+          "valueDescription": "@NotBlank；仅允许 ADMIN/EDITOR/VIEWER，其他值报 1000",
+          "enums": [
+            {
+              "value": "ADMIN",
+              "meaning": "管理员"
+            },
+            {
+              "value": "EDITOR",
+              "meaning": "编辑"
+            },
+            {
+              "value": "VIEWER",
+              "meaning": "只读"
+            }
+          ]
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "long",
+              "description": "新用户 id"
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200，业务成败看 body.code"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色低于 ADMIN"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "用户名已存在：{username}",
+          "httpStatus": "200",
+          "produceCondition": "存在同名且启用的用户"
+        },
+        {
+          "code": "1000",
+          "message": "角色只能是 ADMIN/EDITOR/VIEWER",
+          "httpStatus": "200",
+          "produceCondition": "role 不在三个合法值内（validRole）"
+        },
+        {
+          "code": "1001",
+          "message": "{field} 不能为空",
+          "httpStatus": "200",
+          "produceCondition": "username/password/role 为空白"
+        }
+      ]
+    },
+    {
+      "codeName": "updateUser",
+      "name": "更新用户",
+      "method": "PUT",
+      "path": "/api/v1/users/{id}",
+      "description": "按 id 局部更新用户：body 中为 null 的字段不修改。可改显示名、角色、启用状态；password 非空时重置密码（BCrypt 重新哈希）。写操作日志（USER/UPDATE）。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 ADMIN 角色（类级 @RequireRole(\"ADMIN\")）。",
+      "contentType": "application/json",
+      "requestFields": [
+        {
+          "name": "id",
+          "location": "PATH",
+          "dataType": "long",
+          "required": true,
+          "description": "用户 id"
+        },
+        {
+          "name": "displayName",
+          "location": "BODY",
+          "dataType": "string",
+          "required": false,
+          "description": "显示名，null 不修改"
+        },
+        {
+          "name": "role",
+          "location": "BODY",
+          "dataType": "enum",
+          "required": false,
+          "description": "角色，null 不修改",
+          "valueDescription": "仅允许 ADMIN/EDITOR/VIEWER",
+          "enums": [
+            {
+              "value": "ADMIN",
+              "meaning": "管理员"
+            },
+            {
+              "value": "EDITOR",
+              "meaning": "编辑"
+            },
+            {
+              "value": "VIEWER",
+              "meaning": "只读"
+            }
+          ]
+        },
+        {
+          "name": "enabled",
+          "location": "BODY",
+          "dataType": "boolean",
+          "required": false,
+          "description": "启用状态，null 不修改；置 false 即停用该账号"
+        },
+        {
+          "name": "password",
+          "location": "BODY",
+          "dataType": "string",
+          "required": false,
+          "description": "新密码明文，null 或空串不修改"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "恒为 null"
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色低于 ADMIN"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "用户不存在：id={id}",
+          "httpStatus": "200",
+          "produceCondition": "路径 id 无对应用户"
+        },
+        {
+          "code": "1000",
+          "message": "角色只能是 ADMIN/EDITOR/VIEWER",
+          "httpStatus": "200",
+          "produceCondition": "传入的 role 非法（validRole）"
+        }
+      ]
+    },
+    {
+      "codeName": "listTokens",
+      "name": "开放 API 令牌列表",
+      "method": "GET",
+      "path": "/api/v1/tokens",
+      "description": "查询全部开放 API 令牌（不分页）。仅返回元信息（名称/启用/QPS/最近使用时间），不含明文——库中只存 SHA-256 哈希，明文仅在创建时返回一次。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 ADMIN 角色（类级 @RequireRole(\"ADMIN\")）。",
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "array",
+              "description": "令牌列表（TokenVO）",
+              "children": [
+                {
+                  "name": "id",
+                  "dataType": "long",
+                  "description": "令牌 id"
+                },
+                {
+                  "name": "name",
+                  "dataType": "string",
+                  "description": "令牌名称（标识消费方，造数记录 tokenName 即此值）"
+                },
+                {
+                  "name": "enabled",
+                  "dataType": "boolean",
+                  "description": "是否启用；停用后开放 API 鉴权 401"
+                },
+                {
+                  "name": "qpsLimit",
+                  "dataType": "integer",
+                  "description": "秒级 QPS 配额，超出返回 HTTP 429"
+                },
+                {
+                  "name": "lastUsedAt",
+                  "dataType": "datetime",
+                  "description": "最近一次通过鉴权的时间"
+                },
+                {
+                  "name": "createdAt",
+                  "dataType": "datetime",
+                  "description": "创建时间"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权与角色校验通过"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色低于 ADMIN"
+        }
+      ]
+    },
+    {
+      "codeName": "createToken",
+      "name": "创建开放 API 令牌",
+      "method": "POST",
+      "path": "/api/v1/tokens",
+      "description": "生成开放 API 令牌：明文格式 epdb_ + 32 字节安全随机数的 Base64URL 编码，仅本次响应返回一次，库中只存 SHA-256 哈希，之后无法再查询明文。qpsLimit 缺省 5/s。成功后消费方即可用该明文调 /open-api/v1/**。写操作日志（TOKEN/CREATE）。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 ADMIN 角色（类级 @RequireRole(\"ADMIN\")）。",
+      "contentType": "application/json",
+      "requestFields": [
+        {
+          "name": "name",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "令牌名称，标识消费方（如某条流水线）",
+          "valueDescription": "@NotBlank"
+        },
+        {
+          "name": "qpsLimit",
+          "location": "BODY",
+          "dataType": "integer",
+          "required": false,
+          "defaultValue": "5",
+          "description": "秒级 QPS 配额，null 时取 5"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "创建结果",
+              "children": [
+                {
+                  "name": "id",
+                  "dataType": "long",
+                  "description": "令牌 id"
+                },
+                {
+                  "name": "token",
+                  "dataType": "string",
+                  "description": "令牌明文，仅此一次返回，格式 epdb_xxx；调用方需妥善保存"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色低于 ADMIN"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1001",
+          "message": "name 不能为空",
+          "httpStatus": "200",
+          "produceCondition": "name 为空白（@NotBlank）"
+        }
+      ]
+    },
+    {
+      "codeName": "updateToken",
+      "name": "更新开放 API 令牌",
+      "method": "PUT",
+      "path": "/api/v1/tokens/{id}",
+      "description": "按 id 局部更新令牌：enabled/qpsLimit 为 null 的字段不修改。置 enabled=false 即吊销该令牌（开放 API 立即 401）。写操作日志（TOKEN/UPDATE）。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 ADMIN 角色（类级 @RequireRole(\"ADMIN\")）。",
+      "contentType": "application/json",
+      "requestFields": [
+        {
+          "name": "id",
+          "location": "PATH",
+          "dataType": "long",
+          "required": true,
+          "description": "令牌 id"
+        },
+        {
+          "name": "enabled",
+          "location": "BODY",
+          "dataType": "boolean",
+          "required": false,
+          "description": "启用状态，null 不修改"
+        },
+        {
+          "name": "qpsLimit",
+          "location": "BODY",
+          "dataType": "integer",
+          "required": false,
+          "description": "秒级 QPS 配额，null 不修改"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "恒为 null"
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色低于 ADMIN"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "Token 不存在：id={id}",
+          "httpStatus": "200",
+          "produceCondition": "路径 id 无对应令牌"
+        }
+      ]
+    },
+    {
+      "codeName": "listEnvironments",
+      "name": "环境列表",
+      "method": "GET",
+      "path": "/api/v1/environments",
+      "description": "查询全部目标环境（不分页）。环境是端点与数据源的挂载单位，控制台造数、开放造数都要先选定环境。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。登录即可（无 @RequireRole）。",
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "array",
+              "description": "环境列表（EnvironmentEntity）",
+              "children": [
+                {
+                  "name": "id",
+                  "dataType": "long",
+                  "description": "环境 id"
+                },
+                {
+                  "name": "code",
+                  "dataType": "string",
+                  "description": "环境编码（开放造数按此定位环境）"
+                },
+                {
+                  "name": "name",
+                  "dataType": "string",
+                  "description": "环境名称"
+                },
+                {
+                  "name": "description",
+                  "dataType": "string",
+                  "description": "描述"
+                },
+                {
+                  "name": "createdAt",
+                  "dataType": "datetime",
+                  "description": "创建时间（审计列）"
+                },
+                {
+                  "name": "updatedAt",
+                  "dataType": "datetime",
+                  "description": "更新时间（审计列）"
+                },
+                {
+                  "name": "createdBy",
+                  "dataType": "string",
+                  "description": "创建人（审计列）"
+                },
+                {
+                  "name": "updatedBy",
+                  "dataType": "string",
+                  "description": "更新人（审计列）"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过即成功"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        }
+      ]
+    },
+    {
+      "codeName": "createEnvironment",
+      "name": "创建环境",
+      "method": "POST",
+      "path": "/api/v1/environments",
+      "description": "创建目标环境（如 SIT/UAT）。环境编码全局唯一。成功后可在其下配置模块端点与数据源。写操作日志（ENV/CREATE）。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 ADMIN 角色（@RequireRole(\"ADMIN\")）。",
+      "contentType": "application/json",
+      "requestFields": [
+        {
+          "name": "code",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "环境编码",
+          "valueDescription": "@NotBlank",
+          "businessRule": "全局唯一，重复报 1000"
+        },
+        {
+          "name": "name",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "环境名称",
+          "valueDescription": "@NotBlank"
+        },
+        {
+          "name": "description",
+          "location": "BODY",
+          "dataType": "string",
+          "required": false,
+          "description": "描述"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "long",
+              "description": "新环境 id"
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色低于 ADMIN"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "环境编码已存在：{code}",
+          "httpStatus": "200",
+          "produceCondition": "code 已被其他环境占用"
+        },
+        {
+          "code": "1001",
+          "message": "{field} 不能为空",
+          "httpStatus": "200",
+          "produceCondition": "code/name 为空白"
+        }
+      ]
+    },
+    {
+      "codeName": "updateEnvironment",
+      "name": "更新环境",
+      "method": "PUT",
+      "path": "/api/v1/environments/{id}",
+      "description": "按 id 全量更新环境的编码/名称/描述。编码可改，但不能与其他环境重复。写操作日志（ENV/UPDATE）。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 ADMIN 角色（@RequireRole(\"ADMIN\")）。",
+      "contentType": "application/json",
+      "requestFields": [
+        {
+          "name": "id",
+          "location": "PATH",
+          "dataType": "long",
+          "required": true,
+          "description": "环境 id"
+        },
+        {
+          "name": "code",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "环境编码",
+          "valueDescription": "@NotBlank",
+          "businessRule": "不能与其他环境重复（同 id 自身除外）"
+        },
+        {
+          "name": "name",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "环境名称",
+          "valueDescription": "@NotBlank"
+        },
+        {
+          "name": "description",
+          "location": "BODY",
+          "dataType": "string",
+          "required": false,
+          "description": "描述"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "恒为 null"
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色低于 ADMIN"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "环境不存在：id={id}",
+          "httpStatus": "200",
+          "produceCondition": "路径 id 无对应环境"
+        },
+        {
+          "code": "1000",
+          "message": "环境编码已存在：{code}",
+          "httpStatus": "200",
+          "produceCondition": "新 code 已被其他环境占用"
+        },
+        {
+          "code": "1001",
+          "message": "{field} 不能为空",
+          "httpStatus": "200",
+          "produceCondition": "code/name 为空白"
+        }
+      ]
+    },
+    {
+      "codeName": "deleteEnvironment",
+      "name": "删除环境",
+      "method": "DELETE",
+      "path": "/api/v1/environments/{id}",
+      "description": "物理删除环境。环境下还挂有模块端点或数据源时拒绝删除（须先清空下属配置）。写操作日志（ENV/DELETE）。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 ADMIN 角色（@RequireRole(\"ADMIN\")）。",
+      "requestFields": [
+        {
+          "name": "id",
+          "location": "PATH",
+          "dataType": "long",
+          "required": true,
+          "description": "环境 id"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "恒为 null"
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色低于 ADMIN"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "环境不存在：id={id}",
+          "httpStatus": "200",
+          "produceCondition": "路径 id 无对应环境"
+        },
+        {
+          "code": "1000",
+          "message": "环境下存在端点或数据源，不允许删除",
+          "httpStatus": "200",
+          "produceCondition": "该环境下 endpoint 或 datasource 记录非空"
+        }
+      ]
+    },
+    {
+      "codeName": "listEndpoints",
+      "name": "模块端点列表",
+      "method": "GET",
+      "path": "/api/v1/environments/{envId}/endpoints",
+      "description": "查询指定环境下的模块端点（按 moduleCode 排序）。端点把契约 apiCode 前缀的 moduleCode 映射到该环境的 baseUrl，是 API_CALL 步骤拼 URL 的依据。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。登录即可（无 @RequireRole）。",
+      "requestFields": [
+        {
+          "name": "envId",
+          "location": "PATH",
+          "dataType": "long",
+          "required": true,
+          "description": "环境 id"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "array",
+              "description": "端点列表（ModuleEndpointEntity）",
+              "children": [
+                {
+                  "name": "id",
+                  "dataType": "long",
+                  "description": "端点 id"
+                },
+                {
+                  "name": "envId",
+                  "dataType": "long",
+                  "description": "所属环境 id"
+                },
+                {
+                  "name": "moduleCode",
+                  "dataType": "string",
+                  "description": "模块编码（对应契约平台 apiCode 的 {moduleCode} 前缀）"
+                },
+                {
+                  "name": "baseUrl",
+                  "dataType": "string",
+                  "description": "该模块在此环境的基地址（保存时已去除尾部斜杠）"
+                },
+                {
+                  "name": "headers",
+                  "dataType": "string",
+                  "description": "公共 Header JSON 文本（如网关鉴权头），API_CALL 时随请求发送"
+                },
+                {
+                  "name": "createdAt",
+                  "dataType": "datetime",
+                  "description": "创建时间（审计列）"
+                },
+                {
+                  "name": "updatedAt",
+                  "dataType": "datetime",
+                  "description": "更新时间（审计列）"
+                },
+                {
+                  "name": "createdBy",
+                  "dataType": "string",
+                  "description": "创建人（审计列）"
+                },
+                {
+                  "name": "updatedBy",
+                  "dataType": "string",
+                  "description": "更新人（审计列）"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过即成功；envId 不存在时返回空列表（代码未校验环境存在性）"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        }
+      ]
+    },
+    {
+      "codeName": "createEndpoint",
+      "name": "创建模块端点",
+      "method": "POST",
+      "path": "/api/v1/environments/{envId}/endpoints",
+      "description": "在指定环境下登记模块端点。同一环境内 moduleCode 唯一；baseUrl 尾部斜杠自动去除。成功后该模块的 API_CALL 步骤在此环境可路由。写操作日志（ENV/ENDPOINT_CREATE）。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 ADMIN 角色（@RequireRole(\"ADMIN\")）。",
+      "contentType": "application/json",
+      "requestFields": [
+        {
+          "name": "envId",
+          "location": "PATH",
+          "dataType": "long",
+          "required": true,
+          "description": "环境 id"
+        },
+        {
+          "name": "moduleCode",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "模块编码",
+          "valueDescription": "@NotBlank",
+          "businessRule": "同一环境内唯一，重复报 1000"
+        },
+        {
+          "name": "baseUrl",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "模块基地址",
+          "valueDescription": "@NotBlank；保存时自动去除尾部斜杠"
+        },
+        {
+          "name": "headers",
+          "location": "BODY",
+          "dataType": "string",
+          "required": false,
+          "description": "公共 Header JSON 文本（如 {\"X-Gateway-Token\":\"xxx\"}），API_CALL 执行时解析合并；非法 JSON 会在造数执行时报错"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "long",
+              "description": "新端点 id"
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色低于 ADMIN"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "环境不存在：id={envId}",
+          "httpStatus": "200",
+          "produceCondition": "路径 envId 无对应环境"
+        },
+        {
+          "code": "1000",
+          "message": "该环境下模块端点已存在：{moduleCode}",
+          "httpStatus": "200",
+          "produceCondition": "同环境同 moduleCode 已登记"
+        },
+        {
+          "code": "1001",
+          "message": "{field} 不能为空",
+          "httpStatus": "200",
+          "produceCondition": "moduleCode/baseUrl 为空白"
+        }
+      ]
+    },
+    {
+      "codeName": "updateEndpoint",
+      "name": "更新模块端点",
+      "method": "PUT",
+      "path": "/api/v1/endpoints/{id}",
+      "description": "按端点 id 全量更新 moduleCode/baseUrl/headers（headers 传 null 则清空）。moduleCode 需同环境内唯一，查重排除自身 id，与其他端点重复时报业务错 1000。写操作日志（ENV/ENDPOINT_UPDATE）。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 ADMIN 角色（@RequireRole(\"ADMIN\")）。",
+      "contentType": "application/json",
+      "requestFields": [
+        {
+          "name": "id",
+          "location": "PATH",
+          "dataType": "long",
+          "required": true,
+          "description": "端点 id"
+        },
+        {
+          "name": "moduleCode",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "模块编码",
+          "valueDescription": "@NotBlank；同环境内唯一（查重排除自身 id），重复报业务错 1000"
+        },
+        {
+          "name": "baseUrl",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "模块基地址",
+          "valueDescription": "@NotBlank；保存时自动去除尾部斜杠"
+        },
+        {
+          "name": "headers",
+          "location": "BODY",
+          "dataType": "string",
+          "required": false,
+          "description": "公共 Header JSON 文本"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "恒为 null"
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色低于 ADMIN"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "端点不存在：id={id}",
+          "httpStatus": "200",
+          "produceCondition": "路径 id 无对应端点"
+        },
+        {
+          "code": "1001",
+          "message": "{field} 不能为空",
+          "httpStatus": "200",
+          "produceCondition": "moduleCode/baseUrl 为空白"
+        },
+        {
+          "code": "1000",
+          "message": "该环境下模块端点已存在：{moduleCode}",
+          "httpStatus": "200",
+          "produceCondition": "moduleCode 与同环境下其他端点重复（查重排除自身 id）"
+        }
+      ]
+    },
+    {
+      "codeName": "deleteEndpoint",
+      "name": "删除模块端点",
+      "method": "DELETE",
+      "path": "/api/v1/endpoints/{id}",
+      "description": "物理删除模块端点。删除后依赖该模块的 API_CALL 步骤在此环境执行时会报「环境未配置模块端点」。写操作日志（ENV/ENDPOINT_DELETE）。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 ADMIN 角色（@RequireRole(\"ADMIN\")）。",
+      "requestFields": [
+        {
+          "name": "id",
+          "location": "PATH",
+          "dataType": "long",
+          "required": true,
+          "description": "端点 id"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "恒为 null"
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色低于 ADMIN"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "端点不存在：id={id}",
+          "httpStatus": "200",
+          "produceCondition": "路径 id 无对应端点"
+        }
+      ]
+    },
+    {
+      "codeName": "listDatasources",
+      "name": "数据源列表",
+      "method": "GET",
+      "path": "/api/v1/environments/{envId}/datasources",
+      "description": "查询指定环境下的数据源（按 schemaCode 排序）。返回 DatasourceVO，不回显密码（密码 AES 加密存储且无出参）。数据源是 SQL_EXEC 步骤按 schemaCode 路由的依据。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。登录即可（无 @RequireRole）。",
+      "requestFields": [
+        {
+          "name": "envId",
+          "location": "PATH",
+          "dataType": "long",
+          "required": true,
+          "description": "环境 id"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "array",
+              "description": "数据源列表（DatasourceVO，无密码字段）",
+              "children": [
+                {
+                  "name": "id",
+                  "dataType": "long",
+                  "description": "数据源 id"
+                },
+                {
+                  "name": "schemaCode",
+                  "dataType": "string",
+                  "description": "库标识（SQL_EXEC 步骤 config.schemaCode 按此路由）"
+                },
+                {
+                  "name": "dbType",
+                  "dataType": "string",
+                  "description": "数据库类型"
+                },
+                {
+                  "name": "channel",
+                  "dataType": "enum",
+                  "description": "执行通道",
+                  "enums": [
+                    {
+                      "value": "HUNTER",
+                      "meaning": "经测试猎户数据执行开放接口执行 SQL（主通道）"
+                    },
+                    {
+                      "value": "DIRECT",
+                      "meaning": "平台直连 JDBC 执行（需 jdbcUrl）"
+                    }
+                  ]
+                },
+                {
+                  "name": "jdbcUrl",
+                  "dataType": "string",
+                  "description": "JDBC 连接串（DIRECT 通道使用）"
+                },
+                {
+                  "name": "username",
+                  "dataType": "string",
+                  "description": "数据库用户名"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过即成功；envId 不存在时返回空列表（代码未校验环境存在性）"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        }
+      ]
+    },
+    {
+      "codeName": "createDatasource",
+      "name": "创建数据源",
+      "method": "POST",
+      "path": "/api/v1/environments/{envId}/datasources",
+      "description": "在指定环境下登记数据源。channel 只能是 HUNTER 或 DIRECT（入库统一转大写）；DIRECT 必须填 jdbcUrl；同环境内 schemaCode 唯一；密码非空时 AES 加密入库。写操作日志（DATASOURCE/CREATE，含 channel）。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 ADMIN 角色（@RequireRole(\"ADMIN\")）。",
+      "contentType": "application/json",
+      "requestFields": [
+        {
+          "name": "envId",
+          "location": "PATH",
+          "dataType": "long",
+          "required": true,
+          "description": "环境 id"
+        },
+        {
+          "name": "schemaCode",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "库标识",
+          "valueDescription": "@NotBlank",
+          "businessRule": "同一环境内唯一，重复报 1000"
+        },
+        {
+          "name": "dbType",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "数据库类型",
+          "valueDescription": "@NotBlank（代码未枚举校验取值）"
+        },
+        {
+          "name": "channel",
+          "location": "BODY",
+          "dataType": "enum",
+          "required": true,
+          "description": "执行通道",
+          "valueDescription": "@NotBlank；大小写不敏感，入库转大写；非 HUNTER/DIRECT 报 1000",
+          "enums": [
+            {
+              "value": "HUNTER",
+              "meaning": "经测试猎户数据执行开放接口执行 SQL（主通道，无需 jdbcUrl）"
+            },
+            {
+              "value": "DIRECT",
+              "meaning": "平台直连 JDBC 执行，必须填 jdbcUrl"
+            }
+          ]
+        },
+        {
+          "name": "jdbcUrl",
+          "location": "BODY",
+          "dataType": "string",
+          "required": false,
+          "description": "JDBC 连接串",
+          "businessRule": "channel=DIRECT 时必填，否则报 1000「DIRECT 通道必须填写 JDBC URL」"
+        },
+        {
+          "name": "username",
+          "location": "BODY",
+          "dataType": "string",
+          "required": false,
+          "description": "数据库用户名"
+        },
+        {
+          "name": "password",
+          "location": "BODY",
+          "dataType": "string",
+          "required": false,
+          "description": "数据库密码明文，仅入参；非空时 AES 加密存储，任何接口不回显"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "long",
+              "description": "新数据源 id"
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色低于 ADMIN"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "环境不存在：id={envId}",
+          "httpStatus": "200",
+          "produceCondition": "路径 envId 无对应环境"
+        },
+        {
+          "code": "1000",
+          "message": "该环境下数据源已存在：{schemaCode}",
+          "httpStatus": "200",
+          "produceCondition": "同环境同 schemaCode 已登记"
+        },
+        {
+          "code": "1000",
+          "message": "通道只能是 HUNTER 或 DIRECT",
+          "httpStatus": "200",
+          "produceCondition": "channel 转大写后不在两个合法值内（validateChannel）"
+        },
+        {
+          "code": "1000",
+          "message": "DIRECT 通道必须填写 JDBC URL",
+          "httpStatus": "200",
+          "produceCondition": "channel=DIRECT 且 jdbcUrl 空白（validateChannel）"
+        },
+        {
+          "code": "1001",
+          "message": "{field} 不能为空",
+          "httpStatus": "200",
+          "produceCondition": "schemaCode/dbType/channel 为空白"
+        }
+      ]
+    },
+    {
+      "codeName": "updateDatasource",
+      "name": "更新数据源",
+      "method": "PUT",
+      "path": "/api/v1/datasources/{id}",
+      "description": "按 id 全量更新数据源；password 留空表示不修改原密码，非空则 AES 重新加密。schemaCode 需同环境内唯一，查重排除自身 id，与其他数据源重复时报业务错 1000。通道校验同创建。通道切换（HUNTER<->DIRECT）是显式留痕动作，操作日志 detail 记录 channel:旧->新（设计文档 §12.2）。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 ADMIN 角色（@RequireRole(\"ADMIN\")）。",
+      "contentType": "application/json",
+      "requestFields": [
+        {
+          "name": "id",
+          "location": "PATH",
+          "dataType": "long",
+          "required": true,
+          "description": "数据源 id"
+        },
+        {
+          "name": "schemaCode",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "库标识",
+          "valueDescription": "@NotBlank；同环境内唯一（查重排除自身 id），重复报业务错 1000"
+        },
+        {
+          "name": "dbType",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "数据库类型",
+          "valueDescription": "@NotBlank"
+        },
+        {
+          "name": "channel",
+          "location": "BODY",
+          "dataType": "enum",
+          "required": true,
+          "description": "执行通道",
+          "valueDescription": "@NotBlank；非 HUNTER/DIRECT 报 1000",
+          "enums": [
+            {
+              "value": "HUNTER",
+              "meaning": "经测试猎户执行"
+            },
+            {
+              "value": "DIRECT",
+              "meaning": "直连 JDBC，必须填 jdbcUrl"
+            }
+          ]
+        },
+        {
+          "name": "jdbcUrl",
+          "location": "BODY",
+          "dataType": "string",
+          "required": false,
+          "description": "JDBC 连接串",
+          "businessRule": "channel=DIRECT 时必填"
+        },
+        {
+          "name": "username",
+          "location": "BODY",
+          "dataType": "string",
+          "required": false,
+          "description": "数据库用户名"
+        },
+        {
+          "name": "password",
+          "location": "BODY",
+          "dataType": "string",
+          "required": false,
+          "description": "数据库密码明文；null 或空串 = 不修改原密码"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "恒为 null"
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色低于 ADMIN"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "数据源不存在：id={id}",
+          "httpStatus": "200",
+          "produceCondition": "路径 id 无对应数据源"
+        },
+        {
+          "code": "1000",
+          "message": "该环境下数据源已存在：{schemaCode}",
+          "httpStatus": "200",
+          "produceCondition": "schemaCode 与同环境下其他数据源重复（查重排除自身 id）"
+        },
+        {
+          "code": "1000",
+          "message": "通道只能是 HUNTER 或 DIRECT",
+          "httpStatus": "200",
+          "produceCondition": "channel 非法（validateChannel）"
+        },
+        {
+          "code": "1000",
+          "message": "DIRECT 通道必须填写 JDBC URL",
+          "httpStatus": "200",
+          "produceCondition": "channel=DIRECT 且 jdbcUrl 空白"
+        },
+        {
+          "code": "1001",
+          "message": "{field} 不能为空",
+          "httpStatus": "200",
+          "produceCondition": "schemaCode/dbType/channel 为空白"
+        }
+      ]
+    },
+    {
+      "codeName": "deleteDatasource",
+      "name": "删除数据源",
+      "method": "DELETE",
+      "path": "/api/v1/datasources/{id}",
+      "description": "物理删除数据源，并驱逐其 JDBC 连接池缓存（DynamicDataSourceManager.evict）。删除后依赖该 schemaCode 的 SQL_EXEC 步骤在此环境执行会失败。写操作日志（DATASOURCE/DELETE）。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 ADMIN 角色（@RequireRole(\"ADMIN\")）。",
+      "requestFields": [
+        {
+          "name": "id",
+          "location": "PATH",
+          "dataType": "long",
+          "required": true,
+          "description": "数据源 id"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "恒为 null"
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色低于 ADMIN"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "数据源不存在：id={id}",
+          "httpStatus": "200",
+          "produceCondition": "路径 id 无对应数据源"
+        }
+      ]
+    },
+    {
+      "codeName": "testDatasourceConnection",
+      "name": "数据源连通性测试",
+      "method": "POST",
+      "path": "/api/v1/datasources/{id}/test-connection",
+      "description": "测试数据源连通性：DIRECT 通道获取 JDBC 连接并 isValid(5s)；HUNTER 通道经猎户执行一条 SELECT 1 验证接口可达与 scope 授权。成功返回 code=0 无 data；失败以业务码报错。配置完数据源后、造数前建议先调本接口验证。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 ADMIN 角色（@RequireRole(\"ADMIN\")）。",
+      "requestFields": [
+        {
+          "name": "id",
+          "location": "PATH",
+          "dataType": "long",
+          "required": true,
+          "description": "数据源 id"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=连通"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "恒为 null"
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200，连通与否看 body.code"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色低于 ADMIN"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "数据源不存在：id={id}",
+          "httpStatus": "200",
+          "produceCondition": "路径 id 无对应数据源"
+        },
+        {
+          "code": "1000",
+          "message": "连接无效",
+          "httpStatus": "200",
+          "produceCondition": "DIRECT：JDBC 连接建立但 isValid(5) 为 false"
+        },
+        {
+          "code": "1000",
+          "message": "连接失败：{原因}",
+          "httpStatus": "200",
+          "produceCondition": "DIRECT：获取 JDBC 连接抛异常（地址/账号/网络错误）"
+        },
+        {
+          "code": "1000",
+          "message": "（猎户通道各类失败信息）",
+          "httpStatus": "200",
+          "produceCondition": "HUNTER：猎户未配置/不可达/SELECT 1 执行失败（HunterDataChannel 抛 BizException）"
+        },
+        {
+          "code": "1999",
+          "message": "系统异常：{原因}",
+          "httpStatus": "200",
+          "produceCondition": "未被业务层包装的异常，全局兜底（GlobalExceptionHandler）"
+        }
+      ]
+    },
+    {
+      "codeName": "listFactories",
+      "name": "工厂列表（分页）",
+      "method": "GET",
+      "path": "/api/v1/factories",
+      "description": "分页查询数据工厂（不含已软删除），keyword 对 code/name/description 三字段模糊匹配，按 updatedAt 倒序。管理控制台工厂列表页使用；含停用（enabled=false）工厂。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。登录即可（无 @RequireRole）。",
+      "requestFields": [
+        {
+          "name": "keyword",
+          "location": "QUERY",
+          "dataType": "string",
+          "required": false,
+          "description": "关键词，模糊匹配工厂编码/名称/功能描述；空白视为不过滤"
+        },
+        {
+          "name": "page",
+          "location": "QUERY",
+          "dataType": "integer",
+          "required": false,
+          "defaultValue": "1",
+          "description": "页码，从 1 开始"
+        },
+        {
+          "name": "size",
+          "location": "QUERY",
+          "dataType": "integer",
+          "required": false,
+          "defaultValue": "20",
+          "description": "每页条数"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "分页结果 PageResult",
+              "children": [
+                {
+                  "name": "total",
+                  "dataType": "long",
+                  "description": "总条数"
+                },
+                {
+                  "name": "list",
+                  "dataType": "array",
+                  "description": "当前页工厂（FactoryListVO）",
+                  "children": [
+                    {
+                      "name": "id",
+                      "dataType": "long",
+                      "description": "工厂 id"
+                    },
+                    {
+                      "name": "code",
+                      "dataType": "string",
+                      "description": "工厂编码，格式 {moduleCode}.{实体名}，全局唯一"
+                    },
+                    {
+                      "name": "name",
+                      "dataType": "string",
+                      "description": "工厂名称"
+                    },
+                    {
+                      "name": "description",
+                      "dataType": "string",
+                      "description": "功能描述（LLM 造数推理的检索依据）"
+                    },
+                    {
+                      "name": "owner",
+                      "dataType": "string",
+                      "description": "负责人"
+                    },
+                    {
+                      "name": "enabled",
+                      "dataType": "boolean",
+                      "description": "是否启用；停用工厂不可执行、不出现在开放检索"
+                    },
+                    {
+                      "name": "pureSql",
+                      "dataType": "boolean",
+                      "description": "纯 SQL 工厂标记（无 API_CALL 步骤，承担表结构漂移风险），保存时自动计算"
+                    },
+                    {
+                      "name": "updatedAt",
+                      "dataType": "datetime",
+                      "description": "最近更新时间"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过即成功"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        }
+      ]
+    },
+    {
+      "codeName": "createFactory",
+      "name": "创建工厂",
+      "method": "POST",
+      "path": "/api/v1/factories",
+      "description": "创建数据工厂骨架（仅 code/name/description/owner，参数与步骤由 PUT /api/v1/factories/{id} 保存）。编码必须含点号（{moduleCode}.{实体名}）且全局唯一。成功后工厂 enabled=true、无参数无步骤（此时执行会报「没有配置任何步骤」）。写操作日志（FACTORY/CREATE）。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 EDITOR 及以上角色（@RequireRole(\"EDITOR\")，ADMIN>EDITOR>VIEWER）。",
+      "contentType": "application/json",
+      "requestFields": [
+        {
+          "name": "code",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "工厂编码",
+          "valueDescription": "@NotBlank",
+          "businessRule": "必须包含点号，格式 {moduleCode}.{实体名}（如 user-center.user）；在未删除工厂中全局唯一"
+        },
+        {
+          "name": "name",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "工厂名称",
+          "valueDescription": "@NotBlank"
+        },
+        {
+          "name": "description",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "功能描述——LLM 造数推理的检索依据，写清楚造什么数据、什么场景用",
+          "valueDescription": "@NotBlank（校验消息即强调此字段用途）"
+        },
+        {
+          "name": "owner",
+          "location": "BODY",
+          "dataType": "string",
+          "required": false,
+          "description": "负责人"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "long",
+              "description": "新工厂 id"
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色为 VIEWER（低于 EDITOR）"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "工厂编码格式应为 {moduleCode}.{实体名}，如 user-center.user",
+          "httpStatus": "200",
+          "produceCondition": "code 不含点号"
+        },
+        {
+          "code": "1000",
+          "message": "工厂编码已存在：{code}",
+          "httpStatus": "200",
+          "produceCondition": "同 code 的未删除工厂已存在"
+        },
+        {
+          "code": "1001",
+          "message": "{field} 不能为空",
+          "httpStatus": "200",
+          "produceCondition": "code/name/description 为空白"
+        }
+      ]
+    },
+    {
+      "codeName": "getFactoryDetail",
+      "name": "工厂详情",
+      "method": "GET",
+      "path": "/api/v1/factories/{id}",
+      "description": "查询工厂完整定义：基本信息 + 参数列表（含枚举）+ 步骤编排（含各步骤类型专属 config 与输出提取）。编辑器回显与保存前取 lockVersion 用。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。登录即可（无 @RequireRole）。",
+      "requestFields": [
+        {
+          "name": "id",
+          "location": "PATH",
+          "dataType": "long",
+          "required": true,
+          "description": "工厂 id"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "工厂详情（FactoryDetailDTO）",
+              "children": [
+                {
+                  "name": "id",
+                  "dataType": "long",
+                  "description": "工厂 id"
+                },
+                {
+                  "name": "code",
+                  "dataType": "string",
+                  "description": "工厂编码 {moduleCode}.{实体名}"
+                },
+                {
+                  "name": "name",
+                  "dataType": "string",
+                  "description": "工厂名称"
+                },
+                {
+                  "name": "description",
+                  "dataType": "string",
+                  "description": "功能描述"
+                },
+                {
+                  "name": "owner",
+                  "dataType": "string",
+                  "description": "负责人"
+                },
+                {
+                  "name": "enabled",
+                  "dataType": "boolean",
+                  "description": "是否启用"
+                },
+                {
+                  "name": "pureSql",
+                  "dataType": "boolean",
+                  "description": "纯 SQL 工厂标记（保存时自动计算：有步骤且全部非 API_CALL）"
+                },
+                {
+                  "name": "lockVersion",
+                  "dataType": "long",
+                  "description": "乐观锁版本号，保存时原样带回用于冲突检测"
+                },
+                {
+                  "name": "params",
+                  "dataType": "array",
+                  "description": "参数定义（按 sortNo 排序）",
+                  "children": [
+                    {
+                      "name": "name",
+                      "dataType": "string",
+                      "description": "参数名（字母/数字/下划线，字母或下划线开头）"
+                    },
+                    {
+                      "name": "dataType",
+                      "dataType": "enum",
+                      "description": "参数类型",
+                      "enums": [
+                        {
+                          "value": "string",
+                          "meaning": "字符串"
+                        },
+                        {
+                          "value": "int",
+                          "meaning": "整数（执行时转 long）"
+                        },
+                        {
+                          "value": "long",
+                          "meaning": "长整数"
+                        },
+                        {
+                          "value": "boolean",
+                          "meaning": "布尔"
+                        },
+                        {
+                          "value": "date",
+                          "meaning": "日期（按文本传递，目标库字符串绑定）"
+                        },
+                        {
+                          "value": "datetime",
+                          "meaning": "日期时间（按文本传递）"
+                        },
+                        {
+                          "value": "enum",
+                          "meaning": "枚举，取值限定在 enums 列表内"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "defaultValue",
+                      "dataType": "string",
+                      "description": "默认值文本模板（可用内置函数，执行时渲染后按类型转换）"
+                    },
+                    {
+                      "name": "description",
+                      "dataType": "string",
+                      "description": "参数说明"
+                    },
+                    {
+                      "name": "enums",
+                      "dataType": "array",
+                      "description": "枚举取值（dataType=enum 时）",
+                      "children": [
+                        {
+                          "name": "value",
+                          "dataType": "string",
+                          "description": "取值"
+                        },
+                        {
+                          "name": "meaning",
+                          "dataType": "string",
+                          "description": "含义"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "sortNo",
+                      "dataType": "integer",
+                      "description": "排序号"
+                    }
+                  ]
+                },
+                {
+                  "name": "steps",
+                  "dataType": "array",
+                  "description": "步骤编排（按 sortNo 排序）",
+                  "children": [
+                    {
+                      "name": "sortNo",
+                      "dataType": "integer",
+                      "description": "步骤序号（从 1 开始）"
+                    },
+                    {
+                      "name": "stepType",
+                      "dataType": "enum",
+                      "description": "步骤类型",
+                      "enums": [
+                        {
+                          "value": "API_CALL",
+                          "meaning": "按契约平台 apiCode 调业务接口造数"
+                        },
+                        {
+                          "value": "SQL_EXEC",
+                          "meaning": "经数据通道执行单条 INSERT/UPDATE/DELETE"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "name",
+                      "dataType": "string",
+                      "description": "步骤名称"
+                    },
+                    {
+                      "name": "conditionExpr",
+                      "dataType": "string",
+                      "description": "执行条件表达式，不满足则跳过该步骤（SKIPPED）"
+                    },
+                    {
+                      "name": "config",
+                      "dataType": "object",
+                      "description": "类型专属配置。API_CALL：apiCode（必填 {moduleCode}.{接口名}）、overrideMethod/overridePath（脱契约兜底）、queryTemplate/headerTemplate/bodyTemplate（模板）、expectHttpStatus（默认 200）、asserts（JSONPath 断言数组 {expr,op,value}，op 支持 ==/!=/contains）。SQL_EXEC：schemaCode（必填）、sql（必填，单条 INSERT/UPDATE/DELETE）"
+                    },
+                    {
+                      "name": "outputs",
+                      "dataType": "array",
+                      "description": "输出变量提取（仅 API_CALL 支持）",
+                      "children": [
+                        {
+                          "name": "var",
+                          "dataType": "string",
+                          "description": "输出变量名，供后续步骤模板引用"
+                        },
+                        {
+                          "name": "expr",
+                          "dataType": "string",
+                          "description": "JSONPath 提取表达式（作用于响应体）"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "工厂不存在：id={id}",
+          "httpStatus": "200",
+          "produceCondition": "路径 id 无对应工厂"
+        },
+        {
+          "code": "1000",
+          "message": "工厂已删除：id={id}",
+          "httpStatus": "200",
+          "produceCondition": "工厂 deleted=true（软删除）"
+        }
+      ]
+    },
+    {
+      "codeName": "saveFactory",
+      "name": "保存工厂（参数+步骤全量替换）",
+      "method": "PUT",
+      "path": "/api/v1/factories/{id}",
+      "description": "全量保存工厂定义：基本信息覆盖，参数与步骤整体替换（删旧插新，sortNo 服务端按顺序重排）。乐观锁手动比对 lockVersion，不一致报 1002。保存时做完整校验（参数名/类型、步骤类型/配置、SQL 底线守护），并自动计算 pureSql（有步骤且无 API_CALL 步骤为 true）。成功后新定义立即对控制台与开放 API 生效。写操作日志（FACTORY/UPDATE）。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 EDITOR 及以上角色（@RequireRole(\"EDITOR\")）。",
+      "contentType": "application/json",
+      "requestFields": [
+        {
+          "name": "id",
+          "location": "PATH",
+          "dataType": "long",
+          "required": true,
+          "description": "工厂 id"
+        },
+        {
+          "name": "name",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "工厂名称",
+          "valueDescription": "@NotBlank"
+        },
+        {
+          "name": "description",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "功能描述（LLM 造数推理的检索依据）",
+          "valueDescription": "@NotBlank"
+        },
+        {
+          "name": "owner",
+          "location": "BODY",
+          "dataType": "string",
+          "required": false,
+          "description": "负责人"
+        },
+        {
+          "name": "enabled",
+          "location": "BODY",
+          "dataType": "boolean",
+          "required": false,
+          "defaultValue": "true",
+          "description": "是否启用；null 视为 true。停用后不可执行、不出现在开放检索"
+        },
+        {
+          "name": "lockVersion",
+          "location": "BODY",
+          "dataType": "long",
+          "required": false,
+          "description": "乐观锁版本号（从工厂详情取得后原样带回）",
+          "businessRule": "与库中当前值不一致报 1002「工厂已被他人修改，请刷新后重试」"
+        },
+        {
+          "name": "params",
+          "location": "BODY",
+          "dataType": "array",
+          "required": false,
+          "description": "参数定义列表，整体替换旧参数",
+          "businessRule": "参数名须匹配 [A-Za-z_][A-Za-z0-9_]* 且互不重复；dataType 仅允许 string/int/long/boolean/date/datetime/enum",
+          "children": [
+            {
+              "name": "name",
+              "dataType": "string",
+              "required": true,
+              "description": "参数名"
+            },
+            {
+              "name": "dataType",
+              "dataType": "enum",
+              "required": true,
+              "description": "参数类型",
+              "enums": [
+                {
+                  "value": "string",
+                  "meaning": "字符串"
+                },
+                {
+                  "value": "int",
+                  "meaning": "整数"
+                },
+                {
+                  "value": "long",
+                  "meaning": "长整数"
+                },
+                {
+                  "value": "boolean",
+                  "meaning": "布尔"
+                },
+                {
+                  "value": "date",
+                  "meaning": "日期（文本传递）"
+                },
+                {
+                  "value": "datetime",
+                  "meaning": "日期时间（文本传递）"
+                },
+                {
+                  "value": "enum",
+                  "meaning": "枚举，取值限定 enums"
+                }
+              ]
+            },
+            {
+              "name": "defaultValue",
+              "dataType": "string",
+              "description": "默认值文本模板（可用内置函数）"
+            },
+            {
+              "name": "description",
+              "dataType": "string",
+              "description": "参数说明"
+            },
+            {
+              "name": "enums",
+              "dataType": "array",
+              "description": "枚举取值列表",
+              "children": [
+                {
+                  "name": "value",
+                  "dataType": "string",
+                  "description": "取值"
+                },
+                {
+                  "name": "meaning",
+                  "dataType": "string",
+                  "description": "含义"
+                }
+              ]
+            },
+            {
+              "name": "sortNo",
+              "dataType": "integer",
+              "description": "排序号（服务端保存时按数组顺序重排，从 0 起）"
+            }
+          ]
+        },
+        {
+          "name": "steps",
+          "location": "BODY",
+          "dataType": "array",
+          "required": false,
+          "description": "步骤编排列表，整体替换旧步骤（服务端按数组顺序重排 sortNo，从 1 起）",
+          "businessRule": "stepType 仅 API_CALL/SQL_EXEC；config 必须为 JSON 对象；API_CALL 的 apiCode 必填且含点号；SQL_EXEC 的 schemaCode/sql 必填，SQL 经 SqlGuard 底线校验（单条语句、仅 INSERT/UPDATE/DELETE、UPDATE/DELETE 必须带 WHERE、禁 DDL/DCL/TRUNCATE，剥离注释后判定），且不支持 outputs；outputs 变量名合法且不与参数/其他输出重名，expr（JSONPath）必填",
+          "children": [
+            {
+              "name": "sortNo",
+              "dataType": "integer",
+              "description": "步骤序号（服务端重排）"
+            },
+            {
+              "name": "stepType",
+              "dataType": "enum",
+              "required": true,
+              "description": "步骤类型",
+              "enums": [
+                {
+                  "value": "API_CALL",
+                  "meaning": "调业务接口造数"
+                },
+                {
+                  "value": "SQL_EXEC",
+                  "meaning": "经数据通道执行 SQL"
+                }
+              ]
+            },
+            {
+              "name": "name",
+              "dataType": "string",
+              "description": "步骤名称"
+            },
+            {
+              "name": "conditionExpr",
+              "dataType": "string",
+              "description": "执行条件表达式，不满足则跳过"
+            },
+            {
+              "name": "config",
+              "dataType": "object",
+              "required": true,
+              "description": "类型专属配置，前端原样透传。API_CALL：apiCode/overrideMethod/overridePath/queryTemplate/headerTemplate/bodyTemplate/expectHttpStatus/asserts；SQL_EXEC：schemaCode/sql"
+            },
+            {
+              "name": "outputs",
+              "dataType": "array",
+              "description": "输出提取（仅 API_CALL）",
+              "children": [
+                {
+                  "name": "var",
+                  "dataType": "string",
+                  "description": "输出变量名 [A-Za-z_][A-Za-z0-9_]*"
+                },
+                {
+                  "name": "expr",
+                  "dataType": "string",
+                  "description": "JSONPath 提取表达式"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "恒为 null"
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色为 VIEWER"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "工厂不存在：id={id} / 工厂已删除：id={id}",
+          "httpStatus": "200",
+          "produceCondition": "路径 id 无对应工厂或已软删除"
+        },
+        {
+          "code": "1002",
+          "message": "工厂已被他人修改，请刷新后重试",
+          "httpStatus": "200",
+          "produceCondition": "body.lockVersion 与库中当前版本不一致（手动乐观锁比对）"
+        },
+        {
+          "code": "1000",
+          "message": "参数名不合法：{name}（字母/数字/下划线，字母开头）",
+          "httpStatus": "200",
+          "produceCondition": "参数名不匹配 [A-Za-z_][A-Za-z0-9_]*"
+        },
+        {
+          "code": "1000",
+          "message": "参数名重复：{name}",
+          "httpStatus": "200",
+          "produceCondition": "params 中出现同名参数"
+        },
+        {
+          "code": "1000",
+          "message": "参数 {name} 类型不合法：{dataType}",
+          "httpStatus": "200",
+          "produceCondition": "dataType 不在 string/int/long/boolean/date/datetime/enum 内"
+        },
+        {
+          "code": "1000",
+          "message": "步骤{n} 类型不合法：{stepType}（M1 支持 API_CALL/SQL_EXEC）",
+          "httpStatus": "200",
+          "produceCondition": "stepType 不在白名单"
+        },
+        {
+          "code": "1000",
+          "message": "步骤{n} 缺少配置",
+          "httpStatus": "200",
+          "produceCondition": "config 为 null 或非 JSON 对象"
+        },
+        {
+          "code": "1000",
+          "message": "步骤{n} 的 apiCode 必填且格式为 {moduleCode}.{接口名}",
+          "httpStatus": "200",
+          "produceCondition": "API_CALL 步骤 config.apiCode 为空或不含点号"
+        },
+        {
+          "code": "1000",
+          "message": "步骤{n} 的 schemaCode 必填 / 的 SQL 必填",
+          "httpStatus": "200",
+          "produceCondition": "SQL_EXEC 步骤缺 schemaCode 或 sql"
+        },
+        {
+          "code": "1000",
+          "message": "UPDATE/DELETE 必须带 WHERE 条件",
+          "httpStatus": "200",
+          "produceCondition": "SQL_EXEC 的 UPDATE/DELETE 语句无 WHERE（SqlGuard.checkExecute，保存时即校验）"
+        },
+        {
+          "code": "1000",
+          "message": "执行通道仅允许 INSERT/UPDATE/DELETE 语句（禁 DDL/DCL/TRUNCATE） / 仅允许单条 SQL 语句 / SQL 不能为空",
+          "httpStatus": "200",
+          "produceCondition": "SQL_EXEC 语句类型不在白名单、含多语句分号或剥离注释后为空（SqlGuard）"
+        },
+        {
+          "code": "1000",
+          "message": "步骤{n}：SQL_EXEC 步骤暂不支持输出提取（M2 的 CHECK 步骤支持查询取值）",
+          "httpStatus": "200",
+          "produceCondition": "SQL_EXEC 步骤带了 outputs"
+        },
+        {
+          "code": "1000",
+          "message": "步骤{n} 输出变量名不合法/与已有参数或输出重名/缺少提取表达式（JSONPath）",
+          "httpStatus": "200",
+          "produceCondition": "outputs 的 var 不合法、与参数或其他输出重名、或 expr 空白"
+        },
+        {
+          "code": "1001",
+          "message": "{field} 不能为空",
+          "httpStatus": "200",
+          "produceCondition": "name/description 为空白（@NotBlank）"
+        }
+      ]
+    },
+    {
+      "codeName": "deleteFactory",
+      "name": "删除工厂（软删除）",
+      "method": "DELETE",
+      "path": "/api/v1/factories/{id}",
+      "description": "软删除工厂（deleted=true），执行记录保留。删除后不出现在列表/开放检索，也不能再按 code 执行。写操作日志（FACTORY/DELETE）。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 EDITOR 及以上角色（@RequireRole(\"EDITOR\")）。",
+      "requestFields": [
+        {
+          "name": "id",
+          "location": "PATH",
+          "dataType": "long",
+          "required": true,
+          "description": "工厂 id"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "恒为 null"
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色为 VIEWER"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "工厂不存在：id={id} / 工厂已删除：id={id}",
+          "httpStatus": "200",
+          "produceCondition": "路径 id 无对应工厂或已被软删除（重复删除报后者）"
+        }
+      ]
+    },
+    {
+      "codeName": "consoleBuild",
+      "name": "控制台造数（同步执行）",
+      "method": "POST",
+      "path": "/api/v1/builds",
+      "description": "在管理控制台按 factoryId+envId 同步执行一次造数（source=CONSOLE），返回完整执行轨迹 BuildDetailVO（含每步请求/响应/输出）。执行语义：参数合并（默认值<-调用方，未定义参数拒绝）-> 逐步骤执行（条件不满足则 SKIPPED）-> 任一步骤失败即终止。注意：步骤失败不抛异常——响应仍 code=0，以 data.status=FAILED + errorMsg 表达失败（与开放造数的 2001 语义不同）；进入执行前的校验失败（工厂停用/无步骤/参数非法）才报业务码。刻意无整体事务，失败留半成品轨迹。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 EDITOR 及以上角色（@RequireRole(\"EDITOR\")）。",
+      "contentType": "application/json",
+      "requestFields": [
+        {
+          "name": "factoryId",
+          "location": "BODY",
+          "dataType": "long",
+          "required": true,
+          "description": "工厂 id",
+          "valueDescription": "@NotNull"
+        },
+        {
+          "name": "envId",
+          "location": "BODY",
+          "dataType": "long",
+          "required": true,
+          "description": "目标环境 id",
+          "valueDescription": "@NotNull"
+        },
+        {
+          "name": "params",
+          "location": "BODY",
+          "dataType": "object",
+          "required": false,
+          "description": "造数参数键值对，键必须是工厂已定义的参数名（未定义的键报 1000）；缺省的参数用工厂默认值模板渲染，均无则为 null",
+          "businessRule": "值按参数 dataType 转换：int/long 转数字失败报 1000；enum 取值必须在枚举列表内；string/date/datetime 按文本传递"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=已执行（成败看 data.status），非 0=未进入执行"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "执行轨迹（BuildDetailVO）",
+              "children": [
+                {
+                  "name": "id",
+                  "dataType": "long",
+                  "description": "造数记录 id（buildId）"
+                },
+                {
+                  "name": "factoryCode",
+                  "dataType": "string",
+                  "description": "工厂编码"
+                },
+                {
+                  "name": "factoryName",
+                  "dataType": "string",
+                  "description": "工厂名称"
+                },
+                {
+                  "name": "envCode",
+                  "dataType": "string",
+                  "description": "环境编码"
+                },
+                {
+                  "name": "source",
+                  "dataType": "enum",
+                  "description": "来源，本接口恒为 CONSOLE",
+                  "enums": [
+                    {
+                      "value": "CONSOLE",
+                      "meaning": "控制台造数"
+                    },
+                    {
+                      "value": "OPEN_API",
+                      "meaning": "开放 API 造数"
+                    }
+                  ]
+                },
+                {
+                  "name": "tokenName",
+                  "dataType": "string",
+                  "description": "开放 API 消费方名，CONSOLE 来源为 null"
+                },
+                {
+                  "name": "status",
+                  "dataType": "enum",
+                  "description": "执行结果",
+                  "enums": [
+                    {
+                      "value": "SUCCESS",
+                      "meaning": "全部步骤成功"
+                    },
+                    {
+                      "value": "FAILED",
+                      "meaning": "某步骤失败，执行终止"
+                    },
+                    {
+                      "value": "RUNNING",
+                      "meaning": "执行中（同步返回时不会出现，仅查询进行中记录可见）"
+                    }
+                  ]
+                },
+                {
+                  "name": "paramsJson",
+                  "dataType": "string",
+                  "description": "合并后的最终参数 JSON 文本"
+                },
+                {
+                  "name": "outputsJson",
+                  "dataType": "string",
+                  "description": "全量上下文 JSON 文本（参数+各步骤提取值）；失败时为半成品上下文"
+                },
+                {
+                  "name": "errorMsg",
+                  "dataType": "string",
+                  "description": "失败原因（含失败步骤定位），成功为 null"
+                },
+                {
+                  "name": "durationMs",
+                  "dataType": "long",
+                  "description": "总耗时毫秒"
+                },
+                {
+                  "name": "createdBy",
+                  "dataType": "string",
+                  "description": "执行人"
+                },
+                {
+                  "name": "createdAt",
+                  "dataType": "datetime",
+                  "description": "执行时间"
+                },
+                {
+                  "name": "steps",
+                  "dataType": "array",
+                  "description": "步骤轨迹（StepLogVO，按 sortNo）",
+                  "children": [
+                    {
+                      "name": "sortNo",
+                      "dataType": "integer",
+                      "description": "步骤序号"
+                    },
+                    {
+                      "name": "stepType",
+                      "dataType": "enum",
+                      "description": "步骤类型",
+                      "enums": [
+                        {
+                          "value": "API_CALL",
+                          "meaning": "接口调用"
+                        },
+                        {
+                          "value": "SQL_EXEC",
+                          "meaning": "SQL 执行"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "stepName",
+                      "dataType": "string",
+                      "description": "步骤名称"
+                    },
+                    {
+                      "name": "skipped",
+                      "dataType": "boolean",
+                      "description": "是否因条件不满足被跳过"
+                    },
+                    {
+                      "name": "request",
+                      "dataType": "string",
+                      "description": "请求文本（方法+URL+脱敏 Header+body / SQL 及参数）"
+                    },
+                    {
+                      "name": "response",
+                      "dataType": "string",
+                      "description": "响应文本（HTTP 状态+响应体，超 4000 字符截断）"
+                    },
+                    {
+                      "name": "outputsJson",
+                      "dataType": "string",
+                      "description": "该步骤提取的输出变量 JSON"
+                    },
+                    {
+                      "name": "status",
+                      "dataType": "enum",
+                      "description": "步骤状态",
+                      "enums": [
+                        {
+                          "value": "SUCCESS",
+                          "meaning": "成功"
+                        },
+                        {
+                          "value": "FAILED",
+                          "meaning": "失败（终止后续步骤）"
+                        },
+                        {
+                          "value": "SKIPPED",
+                          "meaning": "条件不满足跳过"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "errorMsg",
+                      "dataType": "string",
+                      "description": "步骤失败原因"
+                    },
+                    {
+                      "name": "durationMs",
+                      "dataType": "long",
+                      "description": "步骤耗时毫秒"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200；造数成败看 data.status（步骤失败不改 code）"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色为 VIEWER"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "工厂不存在：id= / 工厂已删除：id=",
+          "httpStatus": "200",
+          "produceCondition": "factoryId 无对应未删除工厂"
+        },
+        {
+          "code": "1000",
+          "message": "环境不存在：id=",
+          "httpStatus": "200",
+          "produceCondition": "envId 无对应环境"
+        },
+        {
+          "code": "1000",
+          "message": "工厂已停用：{code}",
+          "httpStatus": "200",
+          "produceCondition": "工厂 enabled=false（BuildService.execute 入口校验）"
+        },
+        {
+          "code": "1000",
+          "message": "工厂没有配置任何步骤：{code}",
+          "httpStatus": "200",
+          "produceCondition": "工厂 steps 为空"
+        },
+        {
+          "code": "1000",
+          "message": "未定义的参数：{key}（检查工厂参数定义）",
+          "httpStatus": "200",
+          "produceCondition": "params 里出现工厂未定义的键（mergeParams）"
+        },
+        {
+          "code": "1000",
+          "message": "参数 {name} 需要 {type} 类型，实际值：{value} / 参数 {name} 取值不在枚举范围：{value}",
+          "httpStatus": "200",
+          "produceCondition": "参数类型转换失败或 enum 越界（convert）"
+        },
+        {
+          "code": "1001",
+          "message": "{field} 不能为空",
+          "httpStatus": "200",
+          "produceCondition": "factoryId/envId 为 null（@NotNull）"
+        },
+        {
+          "code": "1999",
+          "message": "系统异常：{原因}",
+          "httpStatus": "200",
+          "produceCondition": "未被业务层捕获的异常，全局兜底"
+        }
+      ]
+    },
+    {
+      "codeName": "listBuilds",
+      "name": "造数记录列表（分页）",
+      "method": "GET",
+      "path": "/api/v1/builds",
+      "description": "分页查询造数执行记录，可按工厂/环境/状态过滤。列表项不含步骤轨迹与参数/输出 JSON（详情接口才有 steps/paramsJson/outputsJson）。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。登录即可（无 @RequireRole）。",
+      "requestFields": [
+        {
+          "name": "factoryId",
+          "location": "QUERY",
+          "dataType": "long",
+          "required": false,
+          "description": "按工厂 id 过滤"
+        },
+        {
+          "name": "envId",
+          "location": "QUERY",
+          "dataType": "long",
+          "required": false,
+          "description": "按环境 id 过滤"
+        },
+        {
+          "name": "status",
+          "location": "QUERY",
+          "dataType": "enum",
+          "required": false,
+          "description": "按状态过滤，空白视为不过滤",
+          "enums": [
+            {
+              "value": "RUNNING",
+              "meaning": "执行中"
+            },
+            {
+              "value": "SUCCESS",
+              "meaning": "成功"
+            },
+            {
+              "value": "FAILED",
+              "meaning": "失败"
+            }
+          ]
+        },
+        {
+          "name": "page",
+          "location": "QUERY",
+          "dataType": "integer",
+          "required": false,
+          "defaultValue": "1",
+          "description": "页码，从 1 开始"
+        },
+        {
+          "name": "size",
+          "location": "QUERY",
+          "dataType": "integer",
+          "required": false,
+          "defaultValue": "20",
+          "description": "每页条数"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "分页结果 PageResult",
+              "children": [
+                {
+                  "name": "total",
+                  "dataType": "long",
+                  "description": "总条数"
+                },
+                {
+                  "name": "list",
+                  "dataType": "array",
+                  "description": "造数记录（BuildListVO）",
+                  "children": [
+                    {
+                      "name": "id",
+                      "dataType": "long",
+                      "description": "造数记录 id"
+                    },
+                    {
+                      "name": "factoryCode",
+                      "dataType": "string",
+                      "description": "工厂编码"
+                    },
+                    {
+                      "name": "factoryName",
+                      "dataType": "string",
+                      "description": "工厂名称"
+                    },
+                    {
+                      "name": "envCode",
+                      "dataType": "string",
+                      "description": "环境编码"
+                    },
+                    {
+                      "name": "source",
+                      "dataType": "enum",
+                      "description": "来源（M1 实际产生 CONSOLE/OPEN_API；实体注释预留 SEED/TRIAL/REF 为 M2 取值）",
+                      "enums": [
+                        {
+                          "value": "CONSOLE",
+                          "meaning": "控制台造数"
+                        },
+                        {
+                          "value": "OPEN_API",
+                          "meaning": "开放 API 造数"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "tokenName",
+                      "dataType": "string",
+                      "description": "OPEN_API 来源时的消费方令牌名"
+                    },
+                    {
+                      "name": "status",
+                      "dataType": "enum",
+                      "description": "执行状态",
+                      "enums": [
+                        {
+                          "value": "RUNNING",
+                          "meaning": "执行中"
+                        },
+                        {
+                          "value": "SUCCESS",
+                          "meaning": "成功"
+                        },
+                        {
+                          "value": "FAILED",
+                          "meaning": "失败"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "errorMsg",
+                      "dataType": "string",
+                      "description": "失败原因"
+                    },
+                    {
+                      "name": "durationMs",
+                      "dataType": "long",
+                      "description": "耗时毫秒"
+                    },
+                    {
+                      "name": "createdBy",
+                      "dataType": "string",
+                      "description": "执行人（开放来源为 system）"
+                    },
+                    {
+                      "name": "createdAt",
+                      "dataType": "datetime",
+                      "description": "执行时间"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过即成功"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        }
+      ]
+    },
+    {
+      "codeName": "getBuildDetail",
+      "name": "造数记录详情（执行轨迹）",
+      "method": "GET",
+      "path": "/api/v1/builds/{id}",
+      "description": "查询单次造数的完整执行轨迹：最终参数、全量输出上下文、逐步骤请求/响应/输出/状态。排障与用例失败归因（数据没造对 vs 系统 bug）时使用。响应结构与控制台造数返回的 BuildDetailVO 一致。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。登录即可（无 @RequireRole）。",
+      "requestFields": [
+        {
+          "name": "id",
+          "location": "PATH",
+          "dataType": "long",
+          "required": true,
+          "description": "造数记录 id"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "执行轨迹（BuildDetailVO，字段树同「控制台造数」响应的 data）",
+              "children": [
+                {
+                  "name": "id",
+                  "dataType": "long",
+                  "description": "造数记录 id"
+                },
+                {
+                  "name": "factoryCode",
+                  "dataType": "string",
+                  "description": "工厂编码"
+                },
+                {
+                  "name": "factoryName",
+                  "dataType": "string",
+                  "description": "工厂名称"
+                },
+                {
+                  "name": "envCode",
+                  "dataType": "string",
+                  "description": "环境编码"
+                },
+                {
+                  "name": "source",
+                  "dataType": "string",
+                  "description": "来源：CONSOLE/OPEN_API"
+                },
+                {
+                  "name": "tokenName",
+                  "dataType": "string",
+                  "description": "OPEN_API 来源的消费方令牌名"
+                },
+                {
+                  "name": "status",
+                  "dataType": "enum",
+                  "description": "执行状态",
+                  "enums": [
+                    {
+                      "value": "RUNNING",
+                      "meaning": "执行中"
+                    },
+                    {
+                      "value": "SUCCESS",
+                      "meaning": "成功"
+                    },
+                    {
+                      "value": "FAILED",
+                      "meaning": "失败"
+                    }
+                  ]
+                },
+                {
+                  "name": "paramsJson",
+                  "dataType": "string",
+                  "description": "合并后最终参数 JSON 文本"
+                },
+                {
+                  "name": "outputsJson",
+                  "dataType": "string",
+                  "description": "全量上下文 JSON 文本"
+                },
+                {
+                  "name": "errorMsg",
+                  "dataType": "string",
+                  "description": "失败原因"
+                },
+                {
+                  "name": "durationMs",
+                  "dataType": "long",
+                  "description": "总耗时毫秒"
+                },
+                {
+                  "name": "createdBy",
+                  "dataType": "string",
+                  "description": "执行人"
+                },
+                {
+                  "name": "createdAt",
+                  "dataType": "datetime",
+                  "description": "执行时间"
+                },
+                {
+                  "name": "steps",
+                  "dataType": "array",
+                  "description": "步骤轨迹（StepLogVO）",
+                  "children": [
+                    {
+                      "name": "sortNo",
+                      "dataType": "integer",
+                      "description": "步骤序号"
+                    },
+                    {
+                      "name": "stepType",
+                      "dataType": "string",
+                      "description": "API_CALL/SQL_EXEC"
+                    },
+                    {
+                      "name": "stepName",
+                      "dataType": "string",
+                      "description": "步骤名称"
+                    },
+                    {
+                      "name": "skipped",
+                      "dataType": "boolean",
+                      "description": "是否被条件跳过"
+                    },
+                    {
+                      "name": "request",
+                      "dataType": "string",
+                      "description": "请求文本（Header 已脱敏）"
+                    },
+                    {
+                      "name": "response",
+                      "dataType": "string",
+                      "description": "响应文本（超长截断）"
+                    },
+                    {
+                      "name": "outputsJson",
+                      "dataType": "string",
+                      "description": "步骤输出 JSON"
+                    },
+                    {
+                      "name": "status",
+                      "dataType": "string",
+                      "description": "SUCCESS/FAILED/SKIPPED"
+                    },
+                    {
+                      "name": "errorMsg",
+                      "dataType": "string",
+                      "description": "失败原因"
+                    },
+                    {
+                      "name": "durationMs",
+                      "dataType": "long",
+                      "description": "步骤耗时毫秒"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权通过后统一 200"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "执行记录不存在：id={id}",
+          "httpStatus": "200",
+          "produceCondition": "路径 id 无对应造数记录"
+        }
+      ]
+    },
+    {
+      "codeName": "listOperationLogs",
+      "name": "操作日志列表（分页）",
+      "method": "GET",
+      "path": "/api/v1/logs",
+      "description": "分页查询操作留痕（只增不改），按 id 倒序。可按 bizType 精确过滤。覆盖工厂/环境/端点/数据源/令牌/用户的增删改动作。",
+      "authDesc": "JWT 鉴权：Authorization: Bearer {token}。需 ADMIN 角色（@RequireRole(\"ADMIN\")）。",
+      "requestFields": [
+        {
+          "name": "bizType",
+          "location": "QUERY",
+          "dataType": "enum",
+          "required": false,
+          "description": "业务类型精确过滤，空白视为不过滤",
+          "valueDescription": "实际写入值（按 record 调用点统计）：FACTORY/ENV/DATASOURCE/TOKEN/USER。【待确认】实体注释写的是 MODULE/API/REVIEW/TOKEN/USER，与实际写入不一致，疑为从契约平台复制的陈旧注释",
+          "enums": [
+            {
+              "value": "FACTORY",
+              "meaning": "工厂创建/保存/删除"
+            },
+            {
+              "value": "ENV",
+              "meaning": "环境及其模块端点的增删改（端点动作为 ENDPOINT_CREATE/ENDPOINT_UPDATE/ENDPOINT_DELETE）"
+            },
+            {
+              "value": "DATASOURCE",
+              "meaning": "数据源增删改（含通道切换留痕）"
+            },
+            {
+              "value": "TOKEN",
+              "meaning": "开放 API 令牌创建/更新"
+            },
+            {
+              "value": "USER",
+              "meaning": "用户创建/更新"
+            }
+          ]
+        },
+        {
+          "name": "page",
+          "location": "QUERY",
+          "dataType": "integer",
+          "required": false,
+          "defaultValue": "1",
+          "description": "页码，从 1 开始"
+        },
+        {
+          "name": "size",
+          "location": "QUERY",
+          "dataType": "integer",
+          "required": false,
+          "defaultValue": "20",
+          "description": "每页条数"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "分页结果 PageResult",
+              "children": [
+                {
+                  "name": "total",
+                  "dataType": "long",
+                  "description": "总条数"
+                },
+                {
+                  "name": "list",
+                  "dataType": "array",
+                  "description": "日志列表（OperationLogEntity）",
+                  "children": [
+                    {
+                      "name": "id",
+                      "dataType": "long",
+                      "description": "日志 id"
+                    },
+                    {
+                      "name": "bizType",
+                      "dataType": "string",
+                      "description": "业务类型：FACTORY/ENV/DATASOURCE/TOKEN/USER"
+                    },
+                    {
+                      "name": "bizId",
+                      "dataType": "long",
+                      "description": "业务对象 id"
+                    },
+                    {
+                      "name": "action",
+                      "dataType": "string",
+                      "description": "动作：CREATE/UPDATE/DELETE/ENDPOINT_CREATE/ENDPOINT_UPDATE/ENDPOINT_DELETE（按 record 调用点统计）"
+                    },
+                    {
+                      "name": "detail",
+                      "dataType": "string",
+                      "description": "细节文本（编码/名称/通道切换等）"
+                    },
+                    {
+                      "name": "operator",
+                      "dataType": "string",
+                      "description": "操作人用户名"
+                    },
+                    {
+                      "name": "createdAt",
+                      "dataType": "datetime",
+                      "description": "操作时间"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "鉴权与角色校验通过"
+        },
+        {
+          "httpStatus": "401",
+          "description": "未登录或登录过期",
+          "produceCondition": "缺少/无效 Bearer token"
+        },
+        {
+          "httpStatus": "403",
+          "description": "权限不足",
+          "produceCondition": "当前角色低于 ADMIN"
+        }
+      ]
+    },
+    {
+      "codeName": "openSearchFactories",
+      "name": "开放-工厂检索",
+      "method": "GET",
+      "path": "/open-api/v1/factories/search",
+      "description": "LLM 造数推理入口：按关键词模糊匹配（工厂编码/名称/功能描述）检索启用且未删除的工厂，返回含完整参数 schema 的候选列表。流水线先调本接口发现可用工厂，再按参数 schema 组装 /open-api/v1/builds 调用。recipes 为 M2 套餐占位，当前恒为空数组。",
+      "authDesc": "开放 API 鉴权：请求头 X-Builder-Token（明文令牌，管理端 POST /api/v1/tokens 创建）。缺头/无效/停用返回 HTTP 401；按令牌秒级限流，超 qpsLimit（默认 5/s）返回 HTTP 429（OpenTokenInterceptor）。",
+      "requestFields": [
+        {
+          "name": "q",
+          "location": "QUERY",
+          "dataType": "string",
+          "required": false,
+          "description": "检索关键词，模糊匹配 code/name/description；空白视为不过滤（返回全部启用工厂，受 topN 限制）"
+        },
+        {
+          "name": "topN",
+          "location": "QUERY",
+          "dataType": "integer",
+          "required": false,
+          "defaultValue": "10",
+          "description": "返回条数上限，服务端封顶 50"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "array",
+              "description": "候选工厂列表（FactorySearchVO）",
+              "children": [
+                {
+                  "name": "factoryCode",
+                  "dataType": "string",
+                  "description": "工厂编码 {moduleCode}.{实体名}，造数调用按此定位"
+                },
+                {
+                  "name": "name",
+                  "dataType": "string",
+                  "description": "工厂名称"
+                },
+                {
+                  "name": "description",
+                  "dataType": "string",
+                  "description": "功能描述（检索与推理依据）"
+                },
+                {
+                  "name": "pureSql",
+                  "dataType": "boolean",
+                  "description": "纯 SQL 工厂标记（无 API 步骤，存在表结构漂移风险）"
+                },
+                {
+                  "name": "params",
+                  "dataType": "array",
+                  "description": "参数 schema（ParamDTO）",
+                  "children": [
+                    {
+                      "name": "name",
+                      "dataType": "string",
+                      "description": "参数名"
+                    },
+                    {
+                      "name": "dataType",
+                      "dataType": "enum",
+                      "description": "参数类型",
+                      "enums": [
+                        {
+                          "value": "string",
+                          "meaning": "字符串"
+                        },
+                        {
+                          "value": "int",
+                          "meaning": "整数"
+                        },
+                        {
+                          "value": "long",
+                          "meaning": "长整数"
+                        },
+                        {
+                          "value": "boolean",
+                          "meaning": "布尔"
+                        },
+                        {
+                          "value": "date",
+                          "meaning": "日期（文本传递）"
+                        },
+                        {
+                          "value": "datetime",
+                          "meaning": "日期时间（文本传递）"
+                        },
+                        {
+                          "value": "enum",
+                          "meaning": "枚举，取值限定 enums"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "defaultValue",
+                      "dataType": "string",
+                      "description": "默认值文本模板；调用未传该参数时渲染使用"
+                    },
+                    {
+                      "name": "description",
+                      "dataType": "string",
+                      "description": "参数说明"
+                    },
+                    {
+                      "name": "enums",
+                      "dataType": "array",
+                      "description": "枚举取值",
+                      "children": [
+                        {
+                          "name": "value",
+                          "dataType": "string",
+                          "description": "取值"
+                        },
+                        {
+                          "name": "meaning",
+                          "dataType": "string",
+                          "description": "含义"
+                        }
+                      ]
+                    },
+                    {
+                      "name": "sortNo",
+                      "dataType": "integer",
+                      "description": "排序号"
+                    }
+                  ]
+                },
+                {
+                  "name": "recipes",
+                  "dataType": "array",
+                  "description": "M2 套餐列表占位，格式冻结，当前恒为空数组"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "令牌校验通过即成功"
+        },
+        {
+          "httpStatus": "401",
+          "description": "令牌无效",
+          "produceCondition": "缺少 X-Builder-Token 请求头，或 token 的 SHA-256 不匹配任何启用令牌（body: Result{code:401}）"
+        },
+        {
+          "httpStatus": "429",
+          "description": "超出 QPS 配额",
+          "produceCondition": "同一令牌当前秒内请求数达到 qpsLimit（body: Result{code:429,message:超出 QPS 配额（n/s）…}）"
+        }
+      ]
+    },
+    {
+      "codeName": "openGetFactory",
+      "name": "开放-单工厂参数 schema",
+      "method": "GET",
+      "path": "/open-api/v1/factories/{factoryCode}",
+      "description": "按工厂编码取单个工厂的完整参数 schema（结构同检索接口的列表项）。流水线已知 factoryCode 时按此组装 build 调用。工厂被停用时报 1000，不返回 schema。",
+      "authDesc": "开放 API 鉴权：请求头 X-Builder-Token。缺头/无效 401；超 QPS 429。",
+      "requestFields": [
+        {
+          "name": "factoryCode",
+          "location": "PATH",
+          "dataType": "string",
+          "required": true,
+          "description": "工厂编码 {moduleCode}.{实体名}"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "工厂 schema（FactorySearchVO，字段树同「开放-工厂检索」data 列表项）",
+              "children": [
+                {
+                  "name": "factoryCode",
+                  "dataType": "string",
+                  "description": "工厂编码"
+                },
+                {
+                  "name": "name",
+                  "dataType": "string",
+                  "description": "工厂名称"
+                },
+                {
+                  "name": "description",
+                  "dataType": "string",
+                  "description": "功能描述"
+                },
+                {
+                  "name": "pureSql",
+                  "dataType": "boolean",
+                  "description": "纯 SQL 工厂标记"
+                },
+                {
+                  "name": "params",
+                  "dataType": "array",
+                  "description": "参数 schema（ParamDTO，含 name/dataType/defaultValue/description/enums/sortNo）"
+                },
+                {
+                  "name": "recipes",
+                  "dataType": "array",
+                  "description": "M2 占位，恒为空数组"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "令牌校验通过后统一 200，业务成败看 body.code"
+        },
+        {
+          "httpStatus": "401",
+          "description": "令牌无效",
+          "produceCondition": "缺少/无效 X-Builder-Token"
+        },
+        {
+          "httpStatus": "429",
+          "description": "超出 QPS 配额",
+          "produceCondition": "同一令牌秒内请求数达到 qpsLimit"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "工厂不存在：{factoryCode}",
+          "httpStatus": "200",
+          "produceCondition": "编码无对应未删除工厂"
+        },
+        {
+          "code": "1000",
+          "message": "工厂已停用：{factoryCode}",
+          "httpStatus": "200",
+          "produceCondition": "工厂 enabled=false（OpenApiController.factory 显式校验）"
+        }
+      ]
+    },
+    {
+      "codeName": "openBuild",
+      "name": "开放-造数执行（on-the-fly）",
+      "method": "POST",
+      "path": "/open-api/v1/builds",
+      "description": "流水线按 factoryCode+envCode 同步执行一次造数（source=OPEN_API，记录消费方令牌名）。成功：code=0，data 含 buildId/status=SUCCESS/outputs（全量上下文对象：参数+各步骤提取值）/durationMs。造数步骤失败：code=2001，message 为失败原因，data 仍带 buildId（供 GET /open-api/v1/builds/{id} 排障）、status=FAILED、半成品 outputs。执行前校验失败（工厂/环境不存在、停用、参数非法）报 1000，此时无 buildId。",
+      "authDesc": "开放 API 鉴权：请求头 X-Builder-Token。缺头/无效 401；超 QPS 429。",
+      "contentType": "application/json",
+      "requestFields": [
+        {
+          "name": "factoryCode",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "工厂编码 {moduleCode}.{实体名}",
+          "valueDescription": "@NotBlank"
+        },
+        {
+          "name": "envCode",
+          "location": "BODY",
+          "dataType": "string",
+          "required": true,
+          "description": "目标环境编码（管理端环境列表的 code）",
+          "valueDescription": "@NotBlank"
+        },
+        {
+          "name": "params",
+          "location": "BODY",
+          "dataType": "object",
+          "required": false,
+          "description": "造数参数键值对；键必须是工厂已定义参数（未定义键报 1000），缺省参数用默认值模板渲染",
+          "businessRule": "值按参数 dataType 转换：int/long 转数字失败、enum 越界均报 1000"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=造数成功；2001=造数失败（data 仍有值）；1000/1001=未进入执行"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "成功为 ok，失败为原因（含失败步骤定位）"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "执行结果（成功与 2001 失败时均返回）",
+              "children": [
+                {
+                  "name": "buildId",
+                  "dataType": "long",
+                  "description": "造数记录 id，可用 GET /open-api/v1/builds/{id} 查完整轨迹"
+                },
+                {
+                  "name": "status",
+                  "dataType": "enum",
+                  "description": "执行结果",
+                  "enums": [
+                    {
+                      "value": "SUCCESS",
+                      "meaning": "全部步骤成功"
+                    },
+                    {
+                      "value": "FAILED",
+                      "meaning": "某步骤失败（此时外层 code=2001）"
+                    }
+                  ]
+                },
+                {
+                  "name": "outputs",
+                  "dataType": "object",
+                  "description": "全量上下文对象（参数+各步骤 JSONPath 提取值），供用例引用造出的数据标识；失败时为半成品上下文"
+                },
+                {
+                  "name": "durationMs",
+                  "dataType": "long",
+                  "description": "总耗时毫秒"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "令牌校验通过后统一 200，造数成败看 body.code（0 成功 / 2001 步骤失败 / 1000 未进入执行）"
+        },
+        {
+          "httpStatus": "401",
+          "description": "令牌无效",
+          "produceCondition": "缺少/无效 X-Builder-Token"
+        },
+        {
+          "httpStatus": "429",
+          "description": "超出 QPS 配额",
+          "produceCondition": "同一令牌秒内请求数达到 qpsLimit"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "2001",
+          "message": "{失败步骤定位与原因}",
+          "httpStatus": "200",
+          "produceCondition": "某造数步骤执行失败（build.status=FAILED），data 仍带 buildId/outputs——OpenApiController.build 特殊语义"
+        },
+        {
+          "code": "1000",
+          "message": "工厂不存在：{factoryCode} / 工厂已停用：{factoryCode}",
+          "httpStatus": "200",
+          "produceCondition": "factoryCode 无对应未删除工厂，或 enabled=false（BuildService 入口校验）"
+        },
+        {
+          "code": "1000",
+          "message": "环境不存在：{envCode}",
+          "httpStatus": "200",
+          "produceCondition": "envCode 无对应环境"
+        },
+        {
+          "code": "1000",
+          "message": "工厂没有配置任何步骤：{code}",
+          "httpStatus": "200",
+          "produceCondition": "工厂无步骤"
+        },
+        {
+          "code": "1000",
+          "message": "未定义的参数：{key}（检查工厂参数定义） / 参数类型或枚举校验失败",
+          "httpStatus": "200",
+          "produceCondition": "params 含未定义键或值类型转换失败（mergeParams/convert）"
+        },
+        {
+          "code": "1001",
+          "message": "{field} 不能为空",
+          "httpStatus": "200",
+          "produceCondition": "factoryCode/envCode 为空白（@NotBlank）"
+        },
+        {
+          "code": "1999",
+          "message": "系统异常：{原因}",
+          "httpStatus": "200",
+          "produceCondition": "未被业务层捕获的异常，全局兜底"
+        }
+      ],
+      "examples": [
+        {
+          "title": "【待确认】构造示例：成功造数",
+          "requestBody": "{\"factoryCode\":\"user-center.user\",\"envCode\":\"sit\",\"params\":{\"username\":\"test_zhang\"}}",
+          "responseBody": "{\"code\":0,\"message\":\"ok\",\"data\":{\"buildId\":101,\"status\":\"SUCCESS\",\"outputs\":{\"username\":\"test_zhang\",\"userId\":9527},\"durationMs\":835}}"
+        },
+        {
+          "title": "【待确认】构造示例：步骤失败（code=2001，data 仍带 buildId）",
+          "requestBody": "{\"factoryCode\":\"user-center.user\",\"envCode\":\"sit\",\"params\":{}}",
+          "responseBody": "{\"code\":2001,\"message\":\"步骤1(创建用户) 失败：HTTP 状态码不符合期望：期望 200，实际 500…\",\"data\":{\"buildId\":102,\"status\":\"FAILED\",\"outputs\":{\"username\":null},\"durationMs\":412}}"
+        }
+      ]
+    },
+    {
+      "codeName": "openGetBuildDetail",
+      "name": "开放-造数执行轨迹查询",
+      "method": "GET",
+      "path": "/open-api/v1/builds/{id}",
+      "description": "按 buildId 查询造数完整执行轨迹（BuildDetailVO，结构同管理端造数详情）。用例失败时归因「数据没造对 vs 系统 bug」的排障入口。注意：代码未按令牌隔离记录归属，任何有效令牌可查询任意 buildId 的轨迹。",
+      "authDesc": "开放 API 鉴权：请求头 X-Builder-Token。缺头/无效 401；超 QPS 429。",
+      "requestFields": [
+        {
+          "name": "id",
+          "location": "PATH",
+          "dataType": "long",
+          "required": true,
+          "description": "造数记录 id（openBuild 返回的 buildId）"
+        }
+      ],
+      "responses": [
+        {
+          "httpStatus": "200",
+          "fields": [
+            {
+              "name": "code",
+              "dataType": "integer",
+              "description": "业务码：0=成功"
+            },
+            {
+              "name": "message",
+              "dataType": "string",
+              "description": "提示信息"
+            },
+            {
+              "name": "data",
+              "dataType": "object",
+              "description": "执行轨迹（BuildDetailVO，字段树同管理端「造数记录详情」）",
+              "children": [
+                {
+                  "name": "id",
+                  "dataType": "long",
+                  "description": "造数记录 id"
+                },
+                {
+                  "name": "factoryCode",
+                  "dataType": "string",
+                  "description": "工厂编码"
+                },
+                {
+                  "name": "factoryName",
+                  "dataType": "string",
+                  "description": "工厂名称"
+                },
+                {
+                  "name": "envCode",
+                  "dataType": "string",
+                  "description": "环境编码"
+                },
+                {
+                  "name": "source",
+                  "dataType": "string",
+                  "description": "来源：CONSOLE/OPEN_API"
+                },
+                {
+                  "name": "tokenName",
+                  "dataType": "string",
+                  "description": "OPEN_API 来源的消费方令牌名"
+                },
+                {
+                  "name": "status",
+                  "dataType": "string",
+                  "description": "RUNNING/SUCCESS/FAILED"
+                },
+                {
+                  "name": "paramsJson",
+                  "dataType": "string",
+                  "description": "合并后最终参数 JSON 文本"
+                },
+                {
+                  "name": "outputsJson",
+                  "dataType": "string",
+                  "description": "全量上下文 JSON 文本"
+                },
+                {
+                  "name": "errorMsg",
+                  "dataType": "string",
+                  "description": "失败原因"
+                },
+                {
+                  "name": "durationMs",
+                  "dataType": "long",
+                  "description": "总耗时毫秒"
+                },
+                {
+                  "name": "createdBy",
+                  "dataType": "string",
+                  "description": "执行人"
+                },
+                {
+                  "name": "createdAt",
+                  "dataType": "datetime",
+                  "description": "执行时间"
+                },
+                {
+                  "name": "steps",
+                  "dataType": "array",
+                  "description": "步骤轨迹（sortNo/stepType/stepName/skipped/request/response/outputsJson/status/errorMsg/durationMs，status 取 SUCCESS/FAILED/SKIPPED）"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "statusCodes": [
+        {
+          "httpStatus": "200",
+          "description": "请求处理完成",
+          "produceCondition": "令牌校验通过后统一 200"
+        },
+        {
+          "httpStatus": "401",
+          "description": "令牌无效",
+          "produceCondition": "缺少/无效 X-Builder-Token"
+        },
+        {
+          "httpStatus": "429",
+          "description": "超出 QPS 配额",
+          "produceCondition": "同一令牌秒内请求数达到 qpsLimit"
+        }
+      ],
+      "errorCodes": [
+        {
+          "code": "1000",
+          "message": "执行记录不存在：id={id}",
+          "httpStatus": "200",
+          "produceCondition": "路径 id 无对应造数记录"
+        }
+      ]
+    }
+  ]
+}

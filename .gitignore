@@ -1,0 +1,18 @@
+# 后端
+ep-data-builder-server/build/
+ep-data-builder-server/.gradle/
+ep-data-builder-server/data/
+ep-data-builder-server/out/
+
+# 前端
+ep-data-builder-web/node_modules/
+ep-data-builder-web/dist/
+
+# 运行时（启动脚本产生的 pid / 日志）
+.run/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.DS_Store

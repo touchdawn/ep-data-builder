@@ -1,0 +1,168 @@
+/**
+ * shadcn-inspired theme for Element Plus
+ * 基于 zinc 中性色板，近黑主色 + 克制边框 + 大圆角，覆盖 Element Plus 设计变量。
+ */
+
+:root {
+  /* ---- 主色：near-black (zinc-900) ---- */
+  --el-color-primary: #18181b;
+  --el-color-primary-light-3: #52525b;
+  --el-color-primary-light-5: #71717a;
+  --el-color-primary-light-7: #a1a1aa;
+  --el-color-primary-light-8: #d4d4d8;
+  --el-color-primary-light-9: #f4f4f5;
+  --el-color-primary-dark-2: #000000;
+
+  /* ---- 语义色：贴近 shadcn 的柔和取向 ---- */
+  --el-color-success: #16a34a;
+  --el-color-warning: #d97706;
+  --el-color-danger: #dc2626;
+  --el-color-error: #dc2626;
+  --el-color-info: #71717a;
+
+  /* ---- 文本层级 ---- */
+  --el-text-color-primary: #18181b;
+  --el-text-color-regular: #3f3f46;
+  --el-text-color-secondary: #71717a;
+  --el-text-color-placeholder: #a1a1aa;
+  --el-text-color-disabled: #d4d4d8;
+
+  /* ---- 边框：统一细而浅 (zinc-200) ---- */
+  --el-border-color: #e4e4e7;
+  --el-border-color-light: #e4e4e7;
+  --el-border-color-lighter: #f0f0f1;
+  --el-border-color-extra-light: #f4f4f5;
+  --el-border-color-dark: #d4d4d8;
+  --el-border-color-hover: #d4d4d8;
+
+  /* ---- 填充 / 背景 ---- */
+  --el-fill-color: #f4f4f5;
+  --el-fill-color-light: #f7f7f8;
+  --el-fill-color-lighter: #fafafa;
+  --el-fill-color-extra-light: #fcfcfc;
+  --el-fill-color-blank: #ffffff;
+  --el-bg-color: #ffffff;
+  --el-bg-color-page: #fafafa;
+  --el-bg-color-overlay: #ffffff;
+
+  /* ---- 圆角：shadcn 的 0.5rem 感 ---- */
+  --el-border-radius-base: 8px;
+  --el-border-radius-small: 6px;
+  --el-border-radius-round: 9999px;
+
+  /* ---- 阴影：更轻更扁 ---- */
+  --el-box-shadow: 0 1px 3px 0 rgba(24, 24, 27, 0.08), 0 1px 2px -1px rgba(24, 24, 27, 0.08);
+  --el-box-shadow-light: 0 1px 2px 0 rgba(24, 24, 27, 0.06);
+  --el-box-shadow-lighter: 0 1px 2px 0 rgba(24, 24, 27, 0.04);
+  --el-box-shadow-dark: 0 4px 12px -2px rgba(24, 24, 27, 0.12);
+
+  --el-font-size-base: 14px;
+}
+
+/* ===== 卡片：细边框 + 极轻阴影，去掉厚重感 ===== */
+.el-card {
+  border: 1px solid var(--el-border-color);
+  border-radius: 12px;
+  box-shadow: var(--el-box-shadow-light) !important;
+}
+.el-card.is-never-shadow {
+  box-shadow: none !important;
+}
+.el-card__header {
+  border-bottom: 1px solid var(--el-border-color);
+  padding: 16px 20px;
+  font-weight: 600;
+}
+.el-card__body {
+  padding: 20px;
+}
+
+/* ===== 按钮：圆角 + 稳重的主按钮 ===== */
+.el-button {
+  border-radius: var(--el-border-radius-small);
+  font-weight: 500;
+}
+.el-button--primary {
+  --el-button-hover-bg-color: #27272a;
+  --el-button-hover-border-color: #27272a;
+  --el-button-active-bg-color: #000000;
+}
+/* 默认按钮 —— 贴近 shadcn 的 outline/secondary */
+.el-button--default:not(.is-plain):not(.is-text):hover {
+  background-color: var(--el-fill-color-light);
+  border-color: var(--el-border-color-dark);
+  color: var(--el-text-color-primary);
+}
+
+/* ===== 输入框 / 选择器：柔和边框 + 聚焦细描边 ===== */
+.el-input__wrapper,
+.el-textarea__inner {
+  border-radius: var(--el-border-radius-small);
+  box-shadow: 0 0 0 1px var(--el-border-color) inset;
+}
+.el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px var(--el-border-color-dark) inset;
+}
+.el-input__wrapper.is-focus,
+.el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px var(--el-color-primary) inset,
+    0 0 0 3px rgba(24, 24, 27, 0.08) !important;
+}
+
+/* ===== 表格：淡雅表头 + 细分隔线 ===== */
+.el-table {
+  --el-table-header-bg-color: #fafafa;
+  --el-table-header-text-color: #52525b;
+  --el-table-border-color: var(--el-border-color);
+  --el-table-row-hover-bg-color: #f7f7f8;
+  border-radius: 10px;
+}
+.el-table th.el-table__cell {
+  font-weight: 600;
+}
+.el-table.el-table--border {
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+/* ===== 标签：轻底色 + 圆角胶囊 ===== */
+.el-tag {
+  border-radius: var(--el-border-radius-small);
+  border: none;
+  font-weight: 500;
+}
+
+/* ===== 菜单：hover / active 用柔和灰底块 ===== */
+.el-menu {
+  --el-menu-hover-bg-color: #f4f4f5;
+  border-right: none;
+}
+
+/* ===== 弹窗 / 抽屉：更大圆角 ===== */
+.el-dialog,
+.el-message-box {
+  border-radius: 14px;
+  box-shadow: var(--el-box-shadow-dark);
+}
+.el-drawer {
+  --el-drawer-padding-primary: 20px;
+}
+
+/* ===== 分页 / 下拉 ===== */
+.el-pagination.is-background .el-pager li,
+.el-pagination.is-background .btn-prev,
+.el-pagination.is-background .btn-next {
+  border-radius: var(--el-border-radius-small);
+}
+.el-select-dropdown__item.is-selected {
+  font-weight: 600;
+}
+.el-popper {
+  border-radius: 10px !important;
+}
+
+/* ===== 消息提示 ===== */
+.el-message {
+  border-radius: 10px;
+  box-shadow: var(--el-box-shadow-dark);
+}
