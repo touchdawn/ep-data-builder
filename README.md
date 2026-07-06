@@ -17,6 +17,19 @@
 
 ## 快速启动
 
+### 一键启停（推荐）
+
+```bash
+./start.sh   # 一键启动前后端（后端 9599 / 前端 7588）
+./stop.sh    # 一键关闭
+```
+
+- **前置要求：本机需安装 Java 8**（Amazon Corretto 8 等均可）。本项目为 Spring Boot 2.1 + Gradle Wrapper 5.6.4，只能用 JDK 8 运行；若用 JDK 17+ 会导致 Gradle 崩溃、后端无法启动，进而前端代理 `/api` 报 500。`start.sh` 会自动通过 `/usr/libexec/java_home -v 1.8` 定位 Java 8，无需手动切换全局 JDK。
+- PID 与日志写入 `.run/`（已 gitignore）；查看日志：`tail -f .run/logs/backend.log`（或 `frontend.log`）。
+- 前端首次启动若无 `node_modules` 会自动 `npm install`。
+
+### 手动启动
+
 后端（需 JDK 8，端口 9599）：
 
 ```bash
