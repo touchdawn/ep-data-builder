@@ -5,6 +5,7 @@ import vue from '@vitejs/plugin-vue'
 export default defineConfig({
   plugins: [vue()],
   server: {
+    host: true, // 同时监听 IPv4/IPv6，localhost 与 127.0.0.1 均可访问
     port: 7588,
     proxy: {
       '/api': {

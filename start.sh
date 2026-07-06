@@ -27,7 +27,14 @@ start_backend() {
   fi
   echo "🚀 启动后端 (端口 9599) ..."
   cd "$SERVER_DIR"
-  nohup ./gradlew bootRun --console=plain > "$LOG_DIR/backend.log" 2>&1 &
+  # 本项目为 Spring Boot 2.1 + Gradle 5.6.4，需用 Java 8 运行（JDK 17 会导致 Gradle 崩溃）
+  local java8
+  java8="$(/usr/libexec/java_home -v 1.8 2>/dev/null || true)"
+  if [[ -z "$java8" ]]; then
+    echo "❌ 未找到 Java 8，请先安装 (brew install --cask corretto8)。后端启动中止。"
+    return
+  fi
+  JAVA_HOME="$java8" nohup ./gradlew bootRun --console=plain > "$LOG_DIR/backend.log" 2>&1 &
   echo $! > "$pid_file"
   echo "   PID $(cat "$pid_file")  日志: $LOG_DIR/backend.log"
 }
