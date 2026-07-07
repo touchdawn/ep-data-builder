@@ -1,7 +1,9 @@
 # 后端
 ep-data-builder-server/build/
 ep-data-builder-server/.gradle/
-ep-data-builder-server/data/
+ep-data-builder-server/data/*
+# 但保留 SQLite 数据库文件
+!ep-data-builder-server/data/databuilder.db
 ep-data-builder-server/out/
 
 # 前端
